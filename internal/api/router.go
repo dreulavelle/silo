@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -69,6 +70,7 @@ type Dependencies struct {
 	BootstrapSensitiveValues     map[string]string
 	AppContext                   context.Context
 	DB                           *pgxpool.Pool
+	FrontendFS                   fs.FS
 	S3Public                     *s3client.Client                 // public assets bucket client (may be nil)
 	S3Private                    *s3client.Client                 // private internal bucket client (may be nil)
 	S3UserDB                     *s3client.Client                 // user-db bucket client (may be nil)
@@ -843,6 +845,7 @@ func NewRouter(deps Dependencies) chi.Router {
 			nil,
 			deps.S3Public,
 		)
+		libraryCollectionHandler.FrontendFS = deps.FrontendFS
 		libraryCollectionHandler.Executor = &catalog.QueryExecutor{Pool: deps.DB}
 		libraryCollectionHandler.SectionRepo = sectionRepo
 		libraryCollectionHandler.UserCollectionPool = deps.DB
@@ -1298,6 +1301,9 @@ func NewRouter(deps Dependencies) chi.Router {
 							deps.UserCollectionScheduler,
 							nil,
 							deps.MDBListClient,
+							deps.S3Public,
+							deps.FrontendFS,
+							4*time.Hour,
 						)
 					}
 					r.Route("/collections", func(r chi.Router) {

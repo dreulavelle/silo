@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +15,7 @@ import (
 	apimw "github.com/Silo-Server/silo-server/internal/api/middleware"
 	"github.com/Silo-Server/silo-server/internal/collections/templates"
 	"github.com/Silo-Server/silo-server/internal/mdblist"
+	"github.com/Silo-Server/silo-server/internal/s3client"
 	"github.com/Silo-Server/silo-server/internal/usercollections"
 	"github.com/Silo-Server/silo-server/internal/userstore"
 )
@@ -26,6 +29,9 @@ type UserCollectionImportHandler struct {
 	scheduler     *usercollections.Scheduler
 	registry      *templates.Registry
 	mdblist       *mdblist.Client
+	s3GP          *s3client.Client
+	frontendFS    fs.FS
+	presignTTL    time.Duration
 }
 
 func NewUserCollectionImportHandler(
@@ -34,6 +40,9 @@ func NewUserCollectionImportHandler(
 	scheduler *usercollections.Scheduler,
 	registry *templates.Registry,
 	mdblistClient *mdblist.Client,
+	s3GP *s3client.Client,
+	frontendFS fs.FS,
+	presignTTL time.Duration,
 ) *UserCollectionImportHandler {
 	if registry == nil {
 		registry = templates.Default
@@ -44,6 +53,9 @@ func NewUserCollectionImportHandler(
 		scheduler:     scheduler,
 		registry:      registry,
 		mdblist:       mdblistClient,
+		s3GP:          s3GP,
+		frontendFS:    frontendFS,
+		presignTTL:    presignTTL,
 	}
 }
 
@@ -213,6 +225,11 @@ func (h *UserCollectionImportHandler) createImportedCollection(
 		return
 	}
 
+	if err := h.storeBundledTemplatePoster(r, store, collection, strings.TrimSpace(shared.PosterURL)); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to process template poster")
+		return
+	}
+
 	syncResult, updated, syncErr := h.sync.RunSync(r.Context(), store, collection)
 	if syncErr != nil {
 		// Persist failure state inline so the UI shows the error and the user
@@ -230,9 +247,73 @@ func (h *UserCollectionImportHandler) createImportedCollection(
 	}
 
 	writeJSON(w, http.StatusCreated, userImportResponse{
-		Collection: toCollectionResponse(*updated),
+		Collection: h.toCollectionResponse(r, *updated),
 		Sync:       syncResult,
 	})
+}
+
+func (h *UserCollectionImportHandler) storeBundledTemplatePoster(
+	r *http.Request,
+	store userstore.UserStore,
+	collection *userstore.Collection,
+	posterPath string,
+) error {
+	if collection == nil {
+		return nil
+	}
+	storedPath, thumbhash, stored, err := storeBundledCollectionPosterIfS3Configured(
+		r.Context(),
+		h.s3GP,
+		h.frontendFS,
+		collection.ID,
+		userCollectionImagePrefix,
+		posterPath,
+	)
+	if err != nil || !stored {
+		return err
+	}
+
+	if err := store.UpdateCollection(r.Context(), userstore.UpdateCollectionInput{
+		ID:               collection.ID,
+		RequestProfileID: collection.CreatorProfileID,
+		PosterURL:        &storedPath,
+		PosterThumbhash:  &thumbhash,
+	}); err != nil {
+		return fmt.Errorf("persisting template poster: %w", err)
+	}
+	collection.PosterURL = storedPath
+	collection.PosterThumbhash = thumbhash
+	return nil
+}
+
+func (h *UserCollectionImportHandler) toCollectionResponse(r *http.Request, c userstore.Collection) collectionResponse {
+	resp := toCollectionResponse(c)
+	resp.PosterURL = h.presignCollectionPoster(r.Context(), c.PosterURL)
+	return resp
+}
+
+func (h *UserCollectionImportHandler) presignCollectionPoster(ctx context.Context, path string) string {
+	if path == "" {
+		return ""
+	}
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path
+	}
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	if h.s3GP == nil {
+		return ""
+	}
+	ttl := h.presignTTL
+	if ttl <= 0 {
+		ttl = 4 * time.Hour
+	}
+	url, err := h.s3GP.PresignGetURL(ctx, h.s3GP.Bucket(), cardThumbnailPath(path), ttl)
+	if err != nil {
+		return ""
+	}
+	return url
 }
 
 func (h *UserCollectionImportHandler) HandleSync(w http.ResponseWriter, r *http.Request) {

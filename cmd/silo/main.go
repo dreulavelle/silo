@@ -1357,15 +1357,16 @@ func main() {
 			compatServer.SessionStore().DeleteByUserID(userID)
 		}
 	}
-	router := api.NewRouter(deps)
 
-	// Step 8: Expose Prometheus metrics endpoint (not behind auth).
 	distFS, fsErr := fs.Sub(siloweb.DistFS, "dist")
 	if fsErr != nil {
 		log.Fatalf("failed to create frontend FS: %v", fsErr)
 	}
+	deps.FrontendFS = distFS
 	server.WebDistFS = distFS
+	router := api.NewRouter(deps)
 
+	// Step 8: Expose Prometheus metrics endpoint (not behind auth).
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", promhttp.Handler())
 	metricsMux.Handle("/api/", router)
