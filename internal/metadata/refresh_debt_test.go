@@ -39,6 +39,34 @@ func TestRefreshDebtReasonsForItemSkipsUnmatchedFailureOnly(t *testing.T) {
 	}
 }
 
+func TestRefreshDebtReasonsForItemFlagsMissingTMDBWithOtherProviderIDs(t *testing.T) {
+	item := &models.MediaItem{
+		Type:   "series",
+		Status: "matched",
+		TvdbID: "420105",
+		ImdbID: "tt18076310",
+		TmdbID: "",
+	}
+
+	mask := refreshDebtReasonsForItem(item)
+	if !hasRefreshDebtReason(mask, RefreshDebtReasonProviderIDIncomplete) {
+		t.Fatalf("reason mask = %d, want provider id incomplete", mask)
+	}
+}
+
+func TestRefreshDebtReasonsForItemDoesNotFlagProviderIDIncompleteWithoutAlternateIDs(t *testing.T) {
+	item := &models.MediaItem{
+		Type:   "series",
+		Status: "matched",
+		TmdbID: "",
+	}
+
+	mask := refreshDebtReasonsForItem(item)
+	if hasRefreshDebtReason(mask, RefreshDebtReasonProviderIDIncomplete) {
+		t.Fatalf("reason mask = %d, did not want provider id incomplete", mask)
+	}
+}
+
 func TestNextRefreshDelayEpisodeSchedule(t *testing.T) {
 	reasonMask := RefreshDebtReasonEpisodeIncomplete
 	cases := []struct {
