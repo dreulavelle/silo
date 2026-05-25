@@ -9,6 +9,7 @@ import (
 
 	"github.com/Silo-Server/silo-server/internal/idgen"
 	"github.com/Silo-Server/silo-server/internal/metadata/tmdb"
+	"golang.org/x/sync/errgroup"
 )
 
 type TMDBClient interface {
@@ -21,6 +22,8 @@ type TMDBClient interface {
 type TMDBExternalIDClient interface {
 	GetExternalIDs(ctx context.Context, mediaType string, id int) (*tmdb.ExternalIDs, error)
 }
+
+const externalIDHydrationConcurrency = 4
 
 type SecretResolver interface {
 	Get(ctx context.Context, key string) (string, error)
@@ -733,6 +736,44 @@ func (s *Service) hydratePresenceCandidate(ctx context.Context, mediaType MediaT
 	return candidate
 }
 
+func (s *Service) hydratePresenceCandidates(ctx context.Context, mediaType MediaType, candidates []PresenceCandidate) []PresenceCandidate {
+	if len(candidates) == 0 {
+		return candidates
+	}
+	if _, ok := s.tmdb.(TMDBExternalIDClient); !ok {
+		return candidates
+	}
+
+	hydrated := append([]PresenceCandidate(nil), candidates...)
+	if externalIDHydrationConcurrency <= 1 {
+		for i := range hydrated {
+			if ctx.Err() != nil {
+				return hydrated
+			}
+			hydrated[i] = s.hydratePresenceCandidate(ctx, mediaType, hydrated[i])
+		}
+		return hydrated
+	}
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(externalIDHydrationConcurrency)
+	for i := range hydrated {
+		if groupCtx.Err() != nil {
+			break
+		}
+		i := i
+		group.Go(func() error {
+			if err := groupCtx.Err(); err != nil {
+				return err
+			}
+			hydrated[i] = s.hydratePresenceCandidate(groupCtx, mediaType, hydrated[i])
+			return nil
+		})
+	}
+	_ = group.Wait()
+	return hydrated
+}
+
 func tmdbMediaType(mediaType MediaType) string {
 	if mediaType == MediaTypeSeries {
 		return "tv"
@@ -741,12 +782,16 @@ func tmdbMediaType(mediaType MediaType) string {
 }
 
 func (s *Service) lookupAvailable(ctx context.Context, mediaType MediaType, ids []int) (map[int]bool, error) {
+	if s.presence == nil {
+		return map[int]bool{}, nil
+	}
 	candidates := make([]PresenceCandidate, 0, len(ids))
 	for _, id := range ids {
 		if id > 0 {
-			candidates = append(candidates, s.hydratePresenceCandidate(ctx, mediaType, PresenceCandidate{TMDBID: id}))
+			candidates = append(candidates, PresenceCandidate{TMDBID: id})
 		}
 	}
+	candidates = s.hydratePresenceCandidates(ctx, mediaType, candidates)
 	matches, err := s.lookupPresence(ctx, mediaType, candidates)
 	if err != nil {
 		return nil, err

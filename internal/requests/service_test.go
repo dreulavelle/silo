@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -306,6 +307,59 @@ func TestSearchMarksSeriesAvailableByHydratedTVDBID(t *testing.T) {
 	}
 	if len(presence.got) != 1 || presence.got[0].TVDBID == nil || *presence.got[0].TVDBID != 420105 {
 		t.Fatalf("presence candidates = %+v, want hydrated tvdb id", presence.got)
+	}
+}
+
+func TestSearchWithNilPresenceDoesNotHydrateExternalIDs(t *testing.T) {
+	store := newFakeStore()
+	store.settings.RequestsEnabled = true
+	tmdbClient := &fakeTMDBClient{page: &tmdb.MediaPage{Results: []tmdb.MediaResult{{
+		ID:        201992,
+		MediaType: "series",
+		Title:     "The Rookie: Feds",
+	}}}}
+	service := NewService(store, tmdbClient, nil)
+
+	_, err := service.Search(context.Background(), testViewer(1), "rookie feds", MediaTypeSeries, 1)
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(tmdbClient.externalIDCalls) != 0 {
+		t.Fatalf("external ID calls = %v, want none", tmdbClient.externalIDCalls)
+	}
+}
+
+func TestSearchHydratesMultipleResultsBeforePresenceLookup(t *testing.T) {
+	store := newFakeStore()
+	store.settings.RequestsEnabled = true
+	tmdbClient := &fakeTMDBClient{
+		page: &tmdb.MediaPage{Results: []tmdb.MediaResult{
+			{ID: 201992, MediaType: "series", Title: "The Rookie: Feds"},
+			{ID: 1399, MediaType: "series", Title: "Game of Thrones"},
+		}},
+		externalIDsByID: map[int]*tmdb.ExternalIDs{
+			201992: {TVDBID: 420105, IMDbID: "tt18076310"},
+			1399:   {TVDBID: 121361, IMDbID: "tt0944947"},
+		},
+	}
+	presence := &fakePresence{}
+	service := NewService(store, tmdbClient, presence)
+
+	_, err := service.Search(context.Background(), testViewer(1), "series", MediaTypeSeries, 1)
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(presence.got) != 2 {
+		t.Fatalf("presence candidates = %d, want 2", len(presence.got))
+	}
+	got := map[int]int{}
+	for _, candidate := range presence.got {
+		if candidate.TVDBID != nil {
+			got[candidate.TMDBID] = *candidate.TVDBID
+		}
+	}
+	if got[201992] != 420105 || got[1399] != 121361 {
+		t.Fatalf("hydrated tvdb ids = %+v", got)
 	}
 }
 
@@ -963,6 +1017,7 @@ func (f *fakePresence) LookupTMDB(_ context.Context, mediaType MediaType, ids []
 }
 
 type fakeTMDBClient struct {
+	mu              sync.Mutex
 	page            *tmdb.MediaPage
 	externalIDs     *tmdb.ExternalIDs
 	externalIDsByID map[int]*tmdb.ExternalIDs
@@ -993,7 +1048,9 @@ func (f *fakeTMDBClient) DiscoverPage(context.Context, string, tmdb.DiscoverPara
 }
 
 func (f *fakeTMDBClient) GetExternalIDs(_ context.Context, _ string, id int) (*tmdb.ExternalIDs, error) {
+	f.mu.Lock()
 	f.externalIDCalls = append(f.externalIDCalls, id)
+	f.mu.Unlock()
 	if f.externalIDsByID != nil {
 		return f.externalIDsByID[id], nil
 	}
