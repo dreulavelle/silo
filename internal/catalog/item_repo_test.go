@@ -199,14 +199,23 @@ func TestLookupExternalIDsSQLChecksProviderTableAndDirectColumns(t *testing.T) {
 		"JOIN media_item_provider_ids mip",
 		"mip.provider = r.provider",
 		"mip.provider_id = r.provider_id",
-		"COALESCE(mi.tmdb_id, '') = r.provider_id",
-		"COALESCE(mi.tvdb_id, '') = r.provider_id",
-		"COALESCE(mi.imdb_id, '') = r.provider_id",
+		"mi.tmdb_id = r.provider_id",
+		"mi.tvdb_id = r.provider_id",
+		"mi.imdb_id = r.provider_id",
 		"JOIN media_folders mf ON mf.id = mil.media_folder_id",
 		"mf.enabled = true",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("lookupExternalIDsSQL missing %q:\n%s", want, sql)
+		}
+	}
+	for _, disallowed := range []string{
+		"COALESCE(mi.tmdb_id, '') = r.provider_id",
+		"COALESCE(mi.tvdb_id, '') = r.provider_id",
+		"COALESCE(mi.imdb_id, '') = r.provider_id",
+	} {
+		if strings.Contains(sql, disallowed) {
+			t.Fatalf("lookupExternalIDsSQL should use indexable direct predicate, found %q:\n%s", disallowed, sql)
 		}
 	}
 }

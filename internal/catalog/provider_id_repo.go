@@ -51,9 +51,28 @@ func (r *ProviderIDRepository) AttachTMDBID(ctx context.Context, contentID, item
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	tmdbText := strconv.Itoa(tmdbID)
+	var existingType, existingTMDBID string
+	if err := tx.QueryRow(ctx, `
+		SELECT type, COALESCE(tmdb_id, '')
+		FROM media_items
+		WHERE content_id = $1
+		FOR UPDATE
+	`, contentID).Scan(&existingType, &existingTMDBID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("loading media item for tmdb attach: content not found")
+		}
+		return fmt.Errorf("loading media item for tmdb attach: %w", err)
+	}
+	if existingType != itemType {
+		return fmt.Errorf("media item type mismatch: got %q, want %q", existingType, itemType)
+	}
+	if existingTMDBID != "" && existingTMDBID != tmdbText {
+		return fmt.Errorf("media item tmdb id conflict: got %q, want %q", existingTMDBID, tmdbText)
+	}
+
 	if _, err := tx.Exec(ctx, `
 		UPDATE media_items
-		SET tmdb_id = COALESCE(NULLIF(tmdb_id, ''), $1),
+		SET tmdb_id = $1,
 		    updated_at = NOW()
 		WHERE content_id = $2
 		  AND type = $3
