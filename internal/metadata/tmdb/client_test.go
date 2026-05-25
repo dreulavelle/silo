@@ -2,10 +2,19 @@ package tmdb
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestNewClientRequiresAPIKey(t *testing.T) {
+	client := NewClient("", 1000)
+	_, err := client.GetCollectionPreset(context.Background(), "trending", "all", "day", 10)
+	if !errors.Is(err, ErrMissingAPIKey) {
+		t.Fatalf("err = %v, want ErrMissingAPIKey", err)
+	}
+}
 
 func TestGetCollectionPresetTrending(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
