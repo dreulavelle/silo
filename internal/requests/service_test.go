@@ -349,6 +349,41 @@ func TestCreateRequestNoActiveDuplicateCreatesRequest(t *testing.T) {
 	}
 }
 
+func TestCreateRequestClearsPriorFailedRequest(t *testing.T) {
+	store := newFakeStore()
+	store.settings.RequestsEnabled = true
+	store.requests["req-prior-failed"] = &Request{
+		ID:        "req-prior-failed",
+		MediaType: MediaTypeMovie,
+		TMDBID:    550,
+		Outcome:   OutcomeFailed,
+		Status:    StatusApproved,
+		LastError: "arr: decode response: json: cannot unmarshal object into Go value of type []radarr.movieResource",
+	}
+	store.requests["req-other-media-failed"] = &Request{
+		ID:        "req-other-media-failed",
+		MediaType: MediaTypeMovie,
+		TMDBID:    999,
+		Outcome:   OutcomeFailed,
+	}
+	service := newTestService(store)
+
+	_, err := service.CreateRequest(context.Background(), testViewer(1), CreateRequestInput{
+		MediaType: MediaTypeMovie,
+		TMDBID:    550,
+		Title:     "Fight Club",
+	})
+	if err != nil {
+		t.Fatalf("CreateRequest returned error: %v", err)
+	}
+	if _, ok := store.requests["req-prior-failed"]; ok {
+		t.Fatal("prior failed request was not cleared")
+	}
+	if _, ok := store.requests["req-other-media-failed"]; !ok {
+		t.Fatal("failed request for different media should not be cleared")
+	}
+}
+
 func TestSearchMarksSeriesAvailableByHydratedTVDBID(t *testing.T) {
 	store := newFakeStore()
 	store.settings.RequestsEnabled = true
@@ -903,6 +938,19 @@ func (f *fakeStore) ListActiveByTMDB(_ context.Context, mediaType MediaType, ids
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) DeleteFailedByTMDB(_ context.Context, mediaType MediaType, tmdbID int) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	deleted := 0
+	for id, req := range f.requests {
+		if req.MediaType == mediaType && req.TMDBID == tmdbID && req.Outcome == OutcomeFailed {
+			delete(f.requests, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 func (f *fakeStore) CreateRequest(_ context.Context, input CreateRequestRecord) (*Request, error) {

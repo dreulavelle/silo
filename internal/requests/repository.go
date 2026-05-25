@@ -182,6 +182,23 @@ func (r *Repository) ListActiveByTMDB(ctx context.Context, mediaType MediaType, 
 	return out, nil
 }
 
+func (r *Repository) DeleteFailedByTMDB(ctx context.Context, mediaType MediaType, tmdbID int) (int, error) {
+	if tmdbID <= 0 {
+		return 0, nil
+	}
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM media_requests
+		WHERE media_type = $1
+		  AND provider = 'tmdb'
+		  AND tmdb_id = $2
+		  AND outcome = 'failed'
+	`, mediaType, tmdbID)
+	if err != nil {
+		return 0, fmt.Errorf("delete failed requests by tmdb: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // quotaLockNamespace partitions advisory locks so request-quota locks do not
 // collide with advisory locks held elsewhere in the database. The value is
 // arbitrary; what matters is that it is stable.

@@ -12,6 +12,9 @@ type Store interface {
 	UpsertUserLimit(ctx context.Context, limit UserLimit) (*UserLimit, error)
 	CountUserRequestsSince(ctx context.Context, userID int, since time.Time) (int, error)
 	ListActiveByTMDB(ctx context.Context, mediaType MediaType, tmdbIDs []int) (map[int]*Request, error)
+	// DeleteFailedByTMDB removes prior failed requests for a given media so a
+	// re-request does not leave behind stale rows in user/admin lists.
+	DeleteFailedByTMDB(ctx context.Context, mediaType MediaType, tmdbID int) (int, error)
 	CreateRequest(ctx context.Context, input CreateRequestRecord) (*Request, error)
 	GetRequest(ctx context.Context, id string) (*Request, error)
 	ListReconciliationCandidates(ctx context.Context, limit int) ([]*Request, error)

@@ -278,6 +278,12 @@ func (s *Service) CreateRequest(ctx context.Context, viewer Viewer, input Create
 		return nil, ErrAlreadyRequested
 	}
 
+	// Re-requesting media that previously failed (e.g., transient integration
+	// error) should not leave stale failed rows behind in user/admin lists.
+	if _, err := s.store.DeleteFailedByTMDB(ctx, normalized.MediaType, normalized.TMDBID); err != nil {
+		return nil, err
+	}
+
 	policy, err := s.EffectivePolicy(ctx, viewer.UserID)
 	if err != nil {
 		return nil, err
