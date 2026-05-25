@@ -157,7 +157,7 @@ export default function RequestBrowse({ kind }: RequestBrowseProps) {
         ) : results.length === 0 ? (
           <p className="text-muted-foreground text-sm">Nothing matched. Try a different sort.</p>
         ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8">
             {results.map((item) => (
               <RequestPosterCard
                 key={`${item.media_type}-${item.tmdb_id}`}
@@ -168,6 +168,7 @@ export default function RequestBrowse({ kind }: RequestBrowseProps) {
                   createRequest.isPending &&
                   pendingRequestKey === mediaRequestKey(item.media_type, item.tmdb_id)
                 }
+                fluid
               />
             ))}
           </div>
@@ -233,9 +234,9 @@ function BrowseHeaderTile({
 
 function BrowseGridSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-      {Array.from({ length: 12 }).map((_, idx) => (
-        <Skeleton key={idx} className="aspect-[2/3] w-full rounded-md" />
+    <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-8">
+      {Array.from({ length: 16 }).map((_, idx) => (
+        <Skeleton key={idx} className="aspect-[2/3] w-full rounded-lg" />
       ))}
     </div>
   );
