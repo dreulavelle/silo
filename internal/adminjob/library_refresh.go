@@ -111,7 +111,8 @@ func (l *PGLibraryRefreshItemLister) ListLibraryItems(ctx context.Context, libra
 			OR mi.refresh_failures > 0
 			OR mi.episode_metadata_incomplete = TRUE
 			OR (
-				COALESCE(mi.tmdb_id, '') = ''
+				LOWER(TRIM(COALESCE(mi.status, ''))) = 'matched'
+				AND COALESCE(mi.tmdb_id, '') = ''
 				AND (
 					COALESCE(mi.tvdb_id, '') <> ''
 					OR COALESCE(mi.imdb_id, '') <> ''

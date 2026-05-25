@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	RefreshDebtReasonEpisodeIncomplete int64 = 1 << iota
-	RefreshDebtReasonStaleProviderID
-	RefreshDebtReasonProviderIDIncomplete
-	RefreshDebtReasonRefreshFailure
-	RefreshDebtReasonCoreMetadataIncomplete
+	RefreshDebtReasonEpisodeIncomplete      int64 = 1
+	RefreshDebtReasonStaleProviderID        int64 = 2
+	RefreshDebtReasonRefreshFailure         int64 = 4
+	RefreshDebtReasonCoreMetadataIncomplete int64 = 8
+	RefreshDebtReasonProviderIDIncomplete   int64 = 16
 )
 
 const (
