@@ -1074,9 +1074,9 @@ func main() {
 		<-pluginAutoUpdateDone
 
 		imageResolver := metadata.NewPluginImageResolver()
-		if pluginService != nil && installationStore != nil {
+		if pluginService != nil && pluginInstallationStore != nil {
 			reloadImageResolvers := func(ctx context.Context) {
-				if err := reloadPluginImageResolvers(ctx, installationStore, imageResolver, pluginService); err != nil {
+				if err := reloadPluginImageResolvers(ctx, pluginInstallationStore, imageResolver, pluginService); err != nil {
 					slog.Warn("failed to reload plugin image resolvers", "error", err)
 				}
 			}
