@@ -57,6 +57,31 @@ func (r *SearchIndexEventRepository) EnqueueDelete(ctx context.Context, execer i
 	return r.enqueue(ctx, execer, SearchProviderMeilisearch, SearchIndexEventDelete, contentID, "")
 }
 
+func (r *SearchIndexEventRepository) EnqueueDeletes(ctx context.Context, execer itemExecer, contentIDs []string) error {
+	if r == nil || execer == nil {
+		return nil
+	}
+	contentIDs = compactNonEmptyStrings(contentIDs)
+	if len(contentIDs) == 0 {
+		return nil
+	}
+	_, err := execer.Exec(ctx, `
+		INSERT INTO catalog_search_index_events (provider, action, content_id, previous_content_id)
+		SELECT $1, $2, ids.content_id, ''
+		FROM unnest($3::text[]) AS ids(content_id)
+		WHERE EXISTS (
+			SELECT 1
+			FROM server_settings
+			WHERE key = 'catalog.search.provider'
+			  AND lower(value) = 'meilisearch'
+		)
+	`, SearchProviderMeilisearch, SearchIndexEventDelete, contentIDs)
+	if isSearchIndexSchemaUnavailable(err) {
+		return nil
+	}
+	return err
+}
+
 func (r *SearchIndexEventRepository) EnqueueRename(ctx context.Context, execer itemExecer, previousContentID, contentID string) error {
 	return r.enqueue(ctx, execer, SearchProviderMeilisearch, SearchIndexEventRename, contentID, previousContentID)
 }
@@ -92,6 +117,10 @@ func EnqueueSearchIndexUpsert(ctx context.Context, execer itemExecer, contentID 
 
 func EnqueueSearchIndexDelete(ctx context.Context, execer itemExecer, contentID string) error {
 	return NewSearchIndexEventRepository(nil).EnqueueDelete(ctx, execer, contentID)
+}
+
+func EnqueueSearchIndexDeletes(ctx context.Context, execer itemExecer, contentIDs []string) error {
+	return NewSearchIndexEventRepository(nil).EnqueueDeletes(ctx, execer, contentIDs)
 }
 
 func EnqueueSearchIndexRename(ctx context.Context, execer itemExecer, previousContentID, contentID string) error {

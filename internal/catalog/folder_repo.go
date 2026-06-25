@@ -571,10 +571,8 @@ func (r *FolderRepository) DeleteWithStats(
 			if e != nil {
 				return fmt.Errorf("collecting deleted orphaned item IDs: %w", e)
 			}
-			for _, contentID := range attemptDeletedIDs {
-				if err := EnqueueSearchIndexDelete(ctx, tx, contentID); err != nil {
-					return fmt.Errorf("enqueueing catalog search orphan delete: %w", err)
-				}
+			if err := EnqueueSearchIndexDeletes(ctx, tx, attemptDeletedIDs); err != nil {
+				return fmt.Errorf("enqueueing catalog search orphan deletes: %w", err)
 			}
 			if e := tx.Commit(ctx); e != nil {
 				return e

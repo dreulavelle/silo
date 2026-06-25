@@ -523,10 +523,8 @@ func (r *LibraryItemRepository) ReconcileFolderMembership(ctx context.Context, f
 				return 0, 0, nil, fmt.Errorf("collecting deleted orphaned media item IDs: %w", err)
 			}
 			deletedItems = len(deletedContentIDs)
-			for _, contentID := range deletedContentIDs {
-				if err := EnqueueSearchIndexDelete(ctx, tx, contentID); err != nil {
-					return 0, 0, nil, fmt.Errorf("enqueueing catalog search orphan delete: %w", err)
-				}
+			if err := EnqueueSearchIndexDeletes(ctx, tx, deletedContentIDs); err != nil {
+				return 0, 0, nil, fmt.Errorf("enqueueing catalog search orphan deletes: %w", err)
 			}
 		}
 	}
