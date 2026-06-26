@@ -10,6 +10,7 @@ import (
 
 	"github.com/Silo-Server/silo-server/internal/auth"
 	"github.com/Silo-Server/silo-server/internal/playback"
+	"github.com/go-chi/chi/v5"
 )
 
 type sessionContextKey string
@@ -249,6 +250,37 @@ func PlaybackSessionAuth(sessions *SessionStore, playbackStore *PlaybackSessionS
 					return
 				}
 			}
+
+			// Stock Jellyfin Android TV ignores the api_key-bearing DirectStreamUrl
+			// we return from PlaybackInfo and builds its own direct-play URL with no
+			// auth header, no api_key/ApiKey, and no PlaySessionId. Anchor auth on
+			// the PlaybackSession negotiated for this item: a successful PlaybackInfo
+			// already authenticated the user and registered a session holding the
+			// CompatToken. Scope this strictly to the direct-play video stream routes
+			// (NOT /Items/{id}/Download) via the chi route pattern, prefer matching
+			// on mediaSourceId when present, and require the matched session's
+			// RouteItemID to equal the requested item so a source id can't
+			// authorize a stream for a different item.
+			if playbackStore != nil {
+				switch chi.RouteContext(r.Context()).RoutePattern() {
+				case "/Videos/{id}/stream", "/Videos/{id}/stream.{container}":
+					routeItemID := chi.URLParam(r, "id")
+					if routeItemID != "" {
+						mediaSourceID := newCaseInsensitiveQuery(r.URL.Query()).Get("mediaSourceId")
+						lookupID := routeItemID
+						if mediaSourceID != "" {
+							lookupID = mediaSourceID
+						}
+						if playSession, _, found := playbackStore.FindByRoute("", lookupID); found && playSession.RouteItemID == routeItemID {
+							if session, ok := resolveCompatToken(r.Context(), sessions, keyAuth, playSession.CompatToken); ok {
+								serveWithSession(next, w, r, session)
+								return
+							}
+						}
+					}
+				}
+			}
+
 			writeError(w, http.StatusUnauthorized, "Unauthorized", "Missing authentication token")
 		})
 	}
