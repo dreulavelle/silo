@@ -114,6 +114,7 @@ type Dependencies struct {
 	AdminStatsProvider           handlers.AdminStatsSource
 	Recommender                  recommendations.Recommender // nil when disabled
 	RecWorker                    *recommendations.Worker     // nil when disabled
+	CatalogSearchVectorizer      catalog.CatalogSearchQueryVectorizer
 	RatingsRepo                  *catalog.RatingsRepo
 	PersonRepo                   *catalog.PersonRepository
 	PersonRefreshQueue           handlers.PersonRefreshQueue
@@ -433,6 +434,7 @@ func NewRouter(deps Dependencies) chi.Router {
 	var seasonRepo *catalog.SeasonRepository
 	var detailSvc *catalog.DetailService
 	var calendarRepo *catalog.CalendarRepository
+	var catalogSearchService *catalog.CatalogSearchService
 	var webhookSyncHandler *handlers.WebhookSyncHandler
 	var requestHandler *handlers.RequestsHandler
 	var autoscanHandler *handlers.AutoscanHandler
@@ -446,6 +448,27 @@ func NewRouter(deps Dependencies) chi.Router {
 		ebookAnnotationStore = handlers.NewPGEbookReaderAnnotationStore(deps.DB)
 		browseRepo := catalog.NewBrowseRepository(deps.DB)
 		itemRepo = catalog.NewItemRepository(deps.DB)
+		catalogSearchSettings, err := catalog.LoadCatalogSearchSettings(context.Background(), settingsRepo)
+		if err != nil {
+			slog.Warn("catalog search: failed to load settings; using postgres", "err", err)
+			catalogSearchSettings = catalog.DefaultCatalogSearchSettings()
+		}
+		searchIndexEvents := catalog.NewSearchIndexEventRepository(deps.DB)
+		catalogSearchService = catalog.NewCatalogSearchServiceFromSettings(
+			catalogSearchSettings,
+			itemRepo,
+			searchIndexEvents,
+			deps.CatalogSearchVectorizer,
+		)
+		if catalogSearchService != nil {
+			catalogSearchService.StartCoverageRefresh(deps.AppContext)
+		}
+		activeSearchProvider := catalog.SearchProviderPostgres
+		if _, ok := catalogSearchService.Provider().(*catalog.MeilisearchSearchProvider); ok {
+			activeSearchProvider = catalog.SearchProviderMeilisearch
+		}
+		searchIndexEvents.WithActiveProvider(activeSearchProvider)
+		itemRepo.WithSearchIndexEvents(searchIndexEvents)
 		episodeRepo = catalog.NewEpisodeRepository(deps.DB)
 		providerIDRepo = catalog.NewProviderIDRepository(deps.DB)
 		calendarRepo = catalog.NewCalendarRepository(deps.DB)
@@ -489,6 +512,9 @@ func NewRouter(deps Dependencies) chi.Router {
 			detailSvc,
 			providerIDRepo,
 		)
+		if catalogSearchService != nil {
+			itemsHandler.SetCatalogSearchProvider(catalogSearchService.Provider())
+		}
 		itemsHandler.EventsHub = deps.EventsHub
 		itemsHandler.UserRepo = userRepo
 		if requester, ok := deps.MetadataService.(handlers.MetadataRefreshRequester); ok {
@@ -523,7 +549,8 @@ func NewRouter(deps Dependencies) chi.Router {
 		catalogHandler = handlers.NewCatalogHandler(
 			catalog.NewCatalogResolver(browseRepo, itemRepo).
 				WithEpisodeRepository(episodeRepo).
-				WithUserStoreProvider(deps.UserStoreProvider),
+				WithUserStoreProvider(deps.UserStoreProvider).
+				WithSearchProvider(catalogSearchService.Provider()),
 			itemsHandler,
 		)
 		catalogHandler.SetWorkSummaryProvider(literaryRepo)
@@ -831,6 +858,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		adminHandler.BootstrapSensitiveConfigured = deps.BootstrapSensitiveConfigured
 		adminHandler.BootstrapSensitiveValues = deps.BootstrapSensitiveValues
 		adminHandler.RestartStatus = restartStatus
+		adminHandler.CatalogSearchStatus = catalogSearchService
 		if settingsRepo != nil {
 			adminHandler.SettingsRepo = settingsRepo
 		}
@@ -2236,6 +2264,7 @@ func NewRouter(deps Dependencies) chi.Router {
 							r.Get("/unmatched", adminHandler.HandleListUnmatched)
 							r.Get("/stats", adminHandler.HandleGetStats)
 							r.Get("/server/status", adminHandler.HandleGetServerStatus)
+							r.Get("/catalog/search/status", adminHandler.HandleGetCatalogSearchStatus)
 							if literaryWorkHandler != nil {
 								r.Get("/literary-works/items/{content_id}/candidates", literaryWorkHandler.HandleListCandidates)
 								r.Post("/literary-works/link", literaryWorkHandler.HandleLinkItems)

@@ -29,6 +29,8 @@ import {
   parseCatalogSearchParams,
 } from "./catalogSearchParams";
 
+const REQUEST_SEARCH_DEBOUNCE_MS = 100;
+
 function defaultCatalogTitle(source: string, searchQuery?: string) {
   if (source === "favorites") return "Favorites";
   if (source === "watchlist") return "Watchlist";
@@ -144,16 +146,16 @@ function CatalogResults({
     [searchParams, setPreferredScope, setSearchParams],
   );
 
-  const showExactResultCount = state.source !== "section";
+  const showExactResultCount = state.source !== "section" && !isQuerySource;
   const catalogQuery = useCatalogWindow(effectiveState, {
     limit,
     visibleRange,
     includeTotal: showExactResultCount,
   });
   const canRequest = useCanRequest();
-  // Add a 200ms TMDB debounce on top of SearchBar's 200ms input debounce so the
+  // Add a short TMDB debounce on top of SearchBar's input debounce so the
   // TMDB plugin isn't hit at the same cadence as the local library query.
-  const tmdbDebouncedQ = useDebounce(state.q ?? "", 200);
+  const tmdbDebouncedQ = useDebounce(state.q ?? "", REQUEST_SEARCH_DEBOUNCE_MS);
   const tmdbQuery = useRequestSearch("all", tmdbDebouncedQ, 1, {
     enabled: canRequest.discoveryEnabled && isQuerySource,
     requireProfile: true,

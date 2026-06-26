@@ -523,7 +523,13 @@ func (r *PersonRepository) Search(ctx context.Context, query string, limit int) 
 
 // Update updates all non-key fields on a person.
 func (r *PersonRepository) Update(ctx context.Context, p models.Person) error {
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin person update tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx, `
 		UPDATE people SET name=$2, sort_name=$3, bio=$4, birth_date=$5, death_date=$6,
 			birthplace=$7, homepage=$8, photo_path=$9, photo_source_path=$10, photo_thumbhash=$11,
 			tmdb_id=$12, imdb_id=$13, tvdb_id=$14, plex_guid=$15, updated_at=now()
@@ -532,7 +538,29 @@ func (r *PersonRepository) Update(ctx context.Context, p models.Person) error {
 		p.Birthplace, p.Homepage, p.PhotoPath, p.PhotoSourcePath, p.PhotoThumbhash,
 		p.TmdbID, p.ImdbID, p.TvdbID, p.PlexGUID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT content_id
+		FROM item_people
+		WHERE person_id = $1
+	`, p.ID)
+	if err != nil {
+		return fmt.Errorf("listing items linked to person %d: %w", p.ID, err)
+	}
+	contentIDs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("collecting items linked to person %d: %w", p.ID, err)
+	}
+	if err := EnqueueSearchIndexUpserts(ctx, tx, contentIDs); err != nil {
+		return fmt.Errorf("enqueueing catalog search person update for person %d: %w", p.ID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit person update tx: %w", err)
+	}
+	return nil
 }
 
 func (r *PersonRepository) UpdatePhotoIfSourceMatches(ctx context.Context, personID int64, sourcePath, cachedPath, thumbhash string) (bool, error) {

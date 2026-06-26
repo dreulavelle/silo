@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/Silo-Server/silo-server/internal/catalog"
 )
 
 const providerIDRepairDefaultBatchSize = 250
@@ -434,6 +436,9 @@ func canonicalizeProviderIDDuplicate(
 	if _, err := tx.Exec(ctx, `DELETE FROM media_items WHERE content_id = $1`, source.ContentID); err != nil {
 		return "", fmt.Errorf("delete duplicate media item %s: %w", source.ContentID, err)
 	}
+	if err := catalog.EnqueueSearchIndexRename(ctx, tx, source.ContentID, canonical.ContentID); err != nil {
+		return "", fmt.Errorf("enqueue catalog search provider-id canonicalization %s -> %s: %w", source.ContentID, canonical.ContentID, err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", fmt.Errorf("commit provider-id canonicalization: %w", err)
 	}
@@ -508,6 +513,9 @@ func canonicalizeProviderIDDuplicateInto(
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM media_items WHERE content_id = $1`, sourceID); err != nil {
 		return "", fmt.Errorf("delete duplicate media item %s: %w", sourceID, err)
+	}
+	if err := catalog.EnqueueSearchIndexRename(ctx, tx, sourceID, canonicalID); err != nil {
+		return "", fmt.Errorf("enqueue catalog search provider-id canonicalization %s -> %s: %w", sourceID, canonicalID, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", fmt.Errorf("commit provider-id canonicalization: %w", err)

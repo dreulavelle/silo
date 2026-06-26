@@ -716,6 +716,53 @@ func (s *DetailService) LocalizeItemModel(ctx context.Context, item *models.Medi
 	return applyItemLocalization(item, loc), nil
 }
 
+// LocalizeItemModels applies presentation-language localization to a batch of
+// media items with a single lookup. Items without a localization row are
+// returned unchanged; the result preserves input order and length.
+func (s *DetailService) LocalizeItemModels(ctx context.Context, items []*models.MediaItem, filter AccessFilter) ([]*models.MediaItem, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	localized := make([]*models.MediaItem, len(items))
+	for i, item := range items {
+		localized[i] = cloneMediaItem(item)
+	}
+	language, err := s.resolvePresentationLanguage(ctx, filter)
+	if err != nil || language == "" || s.itemLocRepo == nil {
+		return localized, err
+	}
+
+	ids := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item == nil || item.ContentID == "" || sameMetadataLanguage(item.DefaultMetadataLanguage, language) {
+			continue
+		}
+		if _, ok := seen[item.ContentID]; ok {
+			continue
+		}
+		seen[item.ContentID] = struct{}{}
+		ids = append(ids, item.ContentID)
+	}
+	if len(ids) == 0 {
+		return localized, nil
+	}
+
+	locs, err := s.itemLocRepo.GetByContentIDs(ctx, ids, language)
+	if err != nil || len(locs) == 0 {
+		return localized, err
+	}
+	for i, item := range items {
+		if item == nil {
+			continue
+		}
+		if loc := locs[item.ContentID]; loc != nil {
+			localized[i] = applyItemLocalization(item, loc)
+		}
+	}
+	return localized, nil
+}
+
 func (s *DetailService) LocalizeSeasonModel(ctx context.Context, season *models.Season, filter AccessFilter) (*models.Season, error) {
 	if season == nil {
 		return nil, nil

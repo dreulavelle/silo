@@ -27,6 +27,14 @@ type CatalogResult struct {
 	HasMore    bool
 	TotalExact bool
 	SnapshotAt time.Time // pagination fence timestamp
+	// Provider, Mode, SemanticUsed and FallbackReason are per-query search
+	// diagnostics. They are only populated on the direct-search path (where a
+	// CatalogSearchProvider actually ran); browse / preview / grouped paths
+	// leave them zero-valued so the handler omits search_diagnostics.
+	Provider       string
+	Mode           string
+	SemanticUsed   bool
+	FallbackReason string
 }
 
 type CatalogFiltersResult struct {
@@ -137,11 +145,12 @@ type previewExecutor interface {
 }
 
 type CatalogResolver struct {
-	browseRepo    *BrowseRepository
-	itemRepo      *ItemRepository
-	episodeRepo   *EpisodeRepository
-	storeProvider userstore.UserStoreProvider
-	facets        facetFetcher
+	browseRepo     *BrowseRepository
+	itemRepo       *ItemRepository
+	episodeRepo    *EpisodeRepository
+	searchProvider CatalogSearchProvider
+	storeProvider  userstore.UserStoreProvider
+	facets         facetFetcher
 	// previewExecutorForScope, when non-nil, is used by previewQuerySource
 	// instead of the default queryExecutorForScope. Tests inject a stub here
 	// to observe how many times the executor is asked for a result page.
@@ -150,8 +159,9 @@ type CatalogResolver struct {
 
 func NewCatalogResolver(browseRepo *BrowseRepository, itemRepo *ItemRepository) *CatalogResolver {
 	r := &CatalogResolver{
-		browseRepo: browseRepo,
-		itemRepo:   itemRepo,
+		browseRepo:     browseRepo,
+		itemRepo:       itemRepo,
+		searchProvider: NewPostgresSearchProvider(itemRepo),
 	}
 	if browseRepo != nil {
 		r.facets = &pgxFacetFetcher{pool: browseRepo.pool}
@@ -172,6 +182,16 @@ func (r *CatalogResolver) WithEpisodeRepository(repo *EpisodeRepository) *Catalo
 		return nil
 	}
 	r.episodeRepo = repo
+	return r
+}
+
+func (r *CatalogResolver) WithSearchProvider(provider CatalogSearchProvider) *CatalogResolver {
+	if r == nil {
+		return nil
+	}
+	if provider != nil {
+		r.searchProvider = provider
+	}
 	return r
 }
 
@@ -260,16 +280,31 @@ func (r *CatalogResolver) resolveDirectSearchSource(ctx context.Context, req Cat
 		return &CatalogResult{Items: []*models.MediaItem{}, Total: 0, HasMore: false, TotalExact: true}, nil
 	}
 
-	items, total, err := r.itemRepo.Search(ctx, req.SearchQuery, itemTypes, req.Limit, req.Offset, searchAccess)
+	provider := r.searchProvider
+	if provider == nil {
+		provider = NewPostgresSearchProvider(r.itemRepo)
+	}
+	result, err := provider.Search(ctx, CatalogSearchRequest{
+		Query:     req.SearchQuery,
+		ItemTypes: itemTypes,
+		Limit:     req.Limit,
+		Offset:    req.Offset,
+		Access:    searchAccess,
+		SkipTotal: req.SkipTotal,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("searching catalog items: %w", err)
 	}
 
 	return &CatalogResult{
-		Items:      items,
-		Total:      total,
-		HasMore:    total > req.Offset+len(items),
-		TotalExact: true,
+		Items:          result.Items,
+		Total:          result.Total,
+		HasMore:        result.HasMore,
+		TotalExact:     result.TotalExact,
+		Provider:       result.Provider,
+		Mode:           result.Mode,
+		SemanticUsed:   result.SemanticUsed,
+		FallbackReason: result.FallbackReason,
 	}, nil
 }
 
