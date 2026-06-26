@@ -282,12 +282,21 @@ func (p *MeilisearchSearchProvider) searchMeilisearch(ctx context.Context, req C
 		total = 0
 	}
 	p.markFallback(semanticFallback)
+	// Derive Mode/SemanticUsed from the POST-downgrade request: the hybrid
+	// downgrade above nils baseSearchReq.Hybrid on error, so a hybrid request
+	// that fell back to keyword correctly reports keyword / semantic_used=false.
+	mode, semanticUsed := "keyword", false
+	if baseSearchReq.Hybrid != nil {
+		mode, semanticUsed = "hybrid", true
+	}
 	return &CatalogSearchResult{
 		Items:          page,
 		Total:          total,
 		HasMore:        hasMore,
 		TotalExact:     false,
 		Provider:       SearchProviderMeilisearch,
+		Mode:           mode,
+		SemanticUsed:   semanticUsed,
 		FallbackReason: semanticFallback,
 	}, nil
 }

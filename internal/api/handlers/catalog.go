@@ -53,11 +53,24 @@ func (h *CatalogHandler) SetWorkSummaryProvider(provider catalog.WorkSummaryProv
 }
 
 type catalogResponse struct {
-	Total      int                `json:"total"`
-	TotalExact bool               `json:"total_exact"`
-	HasMore    bool               `json:"has_more"`
-	Items      []itemListResponse `json:"items"`
-	Snapshot   string             `json:"snapshot,omitempty"`
+	Total             int                `json:"total"`
+	TotalExact        bool               `json:"total_exact"`
+	HasMore           bool               `json:"has_more"`
+	Items             []itemListResponse `json:"items"`
+	Snapshot          string             `json:"snapshot,omitempty"`
+	SearchDiagnostics *searchDiagnostics `json:"search_diagnostics,omitempty"`
+}
+
+// searchDiagnostics is an additive, per-query observability object emitted on
+// /api/v1/catalog only when a relevance-sorted search actually ran through a
+// CatalogSearchProvider. mode/semantic_used reflect POST-downgrade reality
+// (a hybrid request that fell back to keyword reports mode="keyword",
+// semantic_used=false). fallback_reason is omitted when empty.
+type searchDiagnostics struct {
+	Provider       string `json:"provider"`
+	Mode           string `json:"mode"`
+	SemanticUsed   bool   `json:"semantic_used"`
+	FallbackReason string `json:"fallback_reason,omitempty"`
 }
 
 type catalogFiltersResponse struct {
@@ -215,12 +228,26 @@ func (h *CatalogHandler) writeCatalogResponse(w http.ResponseWriter, result *cat
 		snapshot = result.SnapshotAt.Format(time.RFC3339Nano)
 	}
 
+	// A non-empty Provider is the single gate: only the direct-search path sets
+	// it. Browse / preview / non-relevance-sort q= (which never run a provider)
+	// and group=work (fresh CatalogResult with empty Provider) all omit it.
+	var diag *searchDiagnostics
+	if result.Provider != "" {
+		diag = &searchDiagnostics{
+			Provider:       result.Provider,
+			Mode:           result.Mode,
+			SemanticUsed:   result.SemanticUsed,
+			FallbackReason: result.FallbackReason,
+		}
+	}
+
 	writeJSON(w, http.StatusOK, catalogResponse{
-		Total:      result.Total,
-		TotalExact: result.TotalExact && !groupedByWork,
-		HasMore:    result.HasMore,
-		Items:      items,
-		Snapshot:   snapshot,
+		Total:             result.Total,
+		TotalExact:        result.TotalExact && !groupedByWork,
+		HasMore:           result.HasMore,
+		Items:             items,
+		Snapshot:          snapshot,
+		SearchDiagnostics: diag,
 	})
 }
 

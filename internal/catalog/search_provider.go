@@ -62,11 +62,18 @@ type CatalogSearchRequest struct {
 }
 
 type CatalogSearchResult struct {
-	Items          []*models.MediaItem
-	Total          int
-	HasMore        bool
-	TotalExact     bool
-	Provider       string
+	Items      []*models.MediaItem
+	Total      int
+	HasMore    bool
+	TotalExact bool
+	Provider   string
+	// Mode reports which retrieval path actually served this result —
+	// "keyword" or "hybrid". For Meilisearch it reflects POST-downgrade
+	// reality (a hybrid request that fell back to keyword reports "keyword").
+	Mode string
+	// SemanticUsed is true only when a hybrid request was issued AND survived;
+	// it goes false on any hybrid->keyword downgrade.
+	SemanticUsed   bool
 	FallbackReason string
 }
 
@@ -121,6 +128,7 @@ func (p *PostgresSearchProvider) Search(ctx context.Context, req CatalogSearchRe
 		HasMore:    hasMore,
 		TotalExact: totalExact,
 		Provider:   SearchProviderPostgres,
+		Mode:       "keyword",
 	}, nil
 }
 
