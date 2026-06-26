@@ -67,6 +67,24 @@ func TestCatalogSearchSettingsFromMapRejectsOutOfRangeTuning(t *testing.T) {
 	}
 }
 
+func TestActiveCatalogSearchProviderRequiresConfiguredMeilisearch(t *testing.T) {
+	if got := ActiveCatalogSearchProvider(DefaultCatalogSearchSettings()); got != SearchProviderPostgres {
+		t.Fatalf("default active provider = %q, want postgres", got)
+	}
+	if got := ActiveCatalogSearchProvider(CatalogSearchSettings{
+		Provider: SearchProviderMeilisearch,
+	}); got != SearchProviderPostgres {
+		t.Fatalf("meilisearch without URL active provider = %q, want postgres", got)
+	}
+	if got := ActiveCatalogSearchProvider(CatalogSearchSettings{
+		Provider:         SearchProviderMeilisearch,
+		MeilisearchURL:   "http://localhost:7700",
+		MeilisearchIndex: DefaultMeilisearchIndex,
+	}); got != SearchProviderMeilisearch {
+		t.Fatalf("configured meilisearch active provider = %q, want meilisearch", got)
+	}
+}
+
 func TestCatalogSearchDocumentVectorsUseEmbedderAndOptOutMissing(t *testing.T) {
 	docs := []catalogSearchDocument{
 		{ContentID: "movie-1", Title: "One"},
@@ -192,6 +210,72 @@ func TestMeilisearchSearchRequestBuildsHybridWhenSemanticEnabled(t *testing.T) {
 	}
 }
 
+func TestMeilisearchSearchRequestStaysKeywordWhenCoverageNotReady(t *testing.T) {
+	vectorizer := &fakeCatalogSearchVectorizer{vector: []float32{0.5, 0.25}}
+	provider := &MeilisearchSearchProvider{
+		config: MeilisearchProviderConfig{
+			MatchingStrategy: DefaultMeilisearchMatchingStrategy,
+			SemanticEnabled:  true,
+			SemanticRatio:    0.4,
+			Embedder:         "silo_recommendations",
+			Vectorizer:       vectorizer,
+			Coverage:         fakeCoverageGate{ready: false, reason: `type "movie" coverage 40% below threshold`},
+		},
+	}
+	req, fallback := provider.buildMeilisearchSearchRequest(context.Background(), CatalogSearchRequest{
+		Query:     "found family space opera",
+		ItemTypes: []string{"movie"},
+	})
+	if req.Vector != nil || req.Hybrid != nil {
+		t.Fatalf("not-ready coverage should stay keyword-only: %#v", req)
+	}
+	if fallback != `semantic_not_ready: type "movie" coverage 40% below threshold` {
+		t.Fatalf("fallback = %q, want semantic_not_ready diagnostic", fallback)
+	}
+	if vectorizer.calls != 0 {
+		t.Fatalf("not-ready coverage should not call vectorizer, calls = %d", vectorizer.calls)
+	}
+}
+
+func TestMeilisearchSearchRequestBuildsHybridWhenCoverageReady(t *testing.T) {
+	vectorizer := &fakeCatalogSearchVectorizer{vector: []float32{0.5, 0.25}}
+	provider := &MeilisearchSearchProvider{
+		config: MeilisearchProviderConfig{
+			MatchingStrategy: DefaultMeilisearchMatchingStrategy,
+			SemanticEnabled:  true,
+			SemanticRatio:    0.4,
+			Embedder:         "silo_recommendations",
+			Vectorizer:       vectorizer,
+			Coverage:         fakeCoverageGate{ready: true},
+		},
+	}
+	req, fallback := provider.buildMeilisearchSearchRequest(context.Background(), CatalogSearchRequest{
+		Query:     "found family space opera",
+		ItemTypes: []string{"movie"},
+	})
+	if fallback != "" {
+		t.Fatalf("fallback = %q, want empty", fallback)
+	}
+	if req.Hybrid == nil || req.Vector == nil {
+		t.Fatalf("ready coverage should emit hybrid request: %#v", req)
+	}
+}
+
+func TestSemanticModelProviderUsesCommaOkSafety(t *testing.T) {
+	if got := semanticModelProvider(nil); got != nil {
+		t.Fatalf("nil vectorizer should yield nil model provider, got %#v", got)
+	}
+	// A vectorizer that does NOT implement CatalogSemanticModelProvider must not
+	// be asserted into the interface (a nil-interface assertion would panic).
+	if got := semanticModelProvider(&fakeCatalogSearchVectorizer{}); got != nil {
+		t.Fatalf("non-implementing vectorizer should yield nil, got %#v", got)
+	}
+	impl := &fakeModelVectorizer{}
+	if got := semanticModelProvider(impl); got != CatalogSemanticModelProvider(impl) {
+		t.Fatalf("implementing vectorizer should yield itself, got %#v", got)
+	}
+}
+
 func TestMeilisearchSearchRequestBuildsHybridForApproximateInteractiveSearch(t *testing.T) {
 	vectorizer := &fakeCatalogSearchVectorizer{vector: []float32{0.5, 0.25}}
 	provider := &MeilisearchSearchProvider{
@@ -263,6 +347,19 @@ func TestMeilisearchSearchRequestFallsBackWhenEmbeddingFails(t *testing.T) {
 	}
 	if !strings.Contains(fallback, "semantic query embedding failed") {
 		t.Fatalf("fallback = %q, want semantic query failure", fallback)
+	}
+}
+
+func TestMeilisearchCircuitTripsOnServerAndDecodeErrors(t *testing.T) {
+	provider := &MeilisearchSearchProvider{}
+	if !provider.shouldTripCircuit(&meilisearchHTTPError{StatusCode: 500}) {
+		t.Fatal("HTTP 500 should trip circuit")
+	}
+	if !provider.shouldTripCircuit(&meilisearchDecodeError{Err: errors.New("bad json")}) {
+		t.Fatal("decode failure should trip circuit")
+	}
+	if provider.shouldTripCircuit(context.Canceled) {
+		t.Fatal("context.Canceled should not trip circuit")
 	}
 }
 
@@ -345,4 +442,28 @@ func (f *fakeCatalogSearchVectorizer) EmbedSearchQuery(_ context.Context, query 
 		return nil, f.err
 	}
 	return append([]float32(nil), f.vector...), nil
+}
+
+// fakeCoverageGate is a hot-path gate stub: it returns a fixed readiness verdict
+// regardless of item types, so buildMeilisearchSearchRequest's gating can be
+// exercised without a live coverage tracker.
+type fakeCoverageGate struct {
+	ready  bool
+	reason string
+}
+
+func (g fakeCoverageGate) CoverageReady(_ []string) (bool, string) {
+	return g.ready, g.reason
+}
+
+// fakeModelVectorizer implements both CatalogSearchQueryVectorizer and
+// CatalogSemanticModelProvider so semanticModelProvider's comma-ok assertion can
+// be verified against a type that does satisfy the model interface.
+type fakeModelVectorizer struct {
+	fakeCatalogSearchVectorizer
+	model string
+}
+
+func (f *fakeModelVectorizer) ActiveEmbeddingModel(_ context.Context) (string, error) {
+	return f.model, nil
 }

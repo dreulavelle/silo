@@ -11,6 +11,7 @@ type CatalogSearchService struct {
 	meili    *MeilisearchSearchProvider
 	state    *SearchIndexEventRepository
 	itemRepo *ItemRepository
+	coverage *semanticCoverageTracker
 }
 
 func NewCatalogSearchService(
@@ -52,6 +53,19 @@ func NewCatalogSearchServiceFromSettings(
 	if len(vectorizer) > 0 {
 		queryVectorizer = vectorizer[0]
 	}
+	// Semantic can be enabled while recommendations is disabled, so the
+	// vectorizer may be nil or may not also be a model provider. Build the
+	// coverage tracker only for semantic configs; when no model provider is
+	// available it reports not-ready (gate falls back to keyword) rather than
+	// panicking on a nil-interface assertion.
+	var coverage *semanticCoverageTracker
+	if settings.SemanticEnabled && itemRepo != nil && itemRepo.pool != nil {
+		coverage = newSemanticCoverageTracker(itemRepo.pool, settings.IndexTypes, semanticModelProvider(queryVectorizer))
+	}
+	var coverageGate SemanticCoverageGate
+	if coverage != nil {
+		coverageGate = coverage
+	}
 	meili, err := NewMeilisearchSearchProvider(itemRepo, stateRepo, fallback, MeilisearchProviderConfig{
 		URL:              settings.MeilisearchURL,
 		APIKey:           settings.MeilisearchAPIKey,
@@ -63,6 +77,7 @@ func NewCatalogSearchServiceFromSettings(
 		SemanticRatio:    settings.SemanticRatio,
 		Embedder:         settings.Embedder,
 		Vectorizer:       queryVectorizer,
+		Coverage:         coverageGate,
 	})
 	if err != nil {
 		slog.Warn("catalog search: failed to initialize meilisearch provider; using postgres", "err", err)
@@ -70,7 +85,32 @@ func NewCatalogSearchServiceFromSettings(
 	}
 	service.provider = meili
 	service.meili = meili
+	service.coverage = coverage
 	return service
+}
+
+// semanticModelProvider safely derives a CatalogSemanticModelProvider from the
+// query vectorizer. Semantic search can be enabled while recommendations is
+// disabled, so the vectorizer may be nil or may not implement the model
+// interface; the comma-ok assertion avoids the panic that a direct nil-interface
+// assertion would cause and yields nil in both cases (the tracker then reports
+// not-ready).
+func semanticModelProvider(v CatalogSearchQueryVectorizer) CatalogSemanticModelProvider {
+	if mp, ok := v.(CatalogSemanticModelProvider); ok {
+		return mp
+	}
+	return nil
+}
+
+// StartCoverageRefresh launches the semantic-coverage refresher for the lifetime
+// of ctx. It is a no-op when there is no tracker (postgres provider or semantic
+// disabled). Run performs an immediate refresh then ticks until ctx is done, so
+// callers pass a process-lifetime context and need no WaitGroup.
+func (s *CatalogSearchService) StartCoverageRefresh(ctx context.Context) {
+	if s == nil || s.coverage == nil {
+		return
+	}
+	go s.coverage.Run(ctx)
 }
 
 func ActiveCatalogSearchProvider(settings CatalogSearchSettings) string {

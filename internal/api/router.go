@@ -460,6 +460,9 @@ func NewRouter(deps Dependencies) chi.Router {
 			searchIndexEvents,
 			deps.CatalogSearchVectorizer,
 		)
+		if catalogSearchService != nil {
+			catalogSearchService.StartCoverageRefresh(deps.AppContext)
+		}
 		activeSearchProvider := catalog.SearchProviderPostgres
 		if _, ok := catalogSearchService.Provider().(*catalog.MeilisearchSearchProvider); ok {
 			activeSearchProvider = catalog.SearchProviderMeilisearch

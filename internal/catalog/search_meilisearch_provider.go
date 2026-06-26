@@ -39,6 +39,7 @@ type MeilisearchProviderConfig struct {
 	SemanticRatio    float64
 	Embedder         string
 	Vectorizer       CatalogSearchQueryVectorizer
+	Coverage         SemanticCoverageGate
 }
 
 type MeilisearchSearchProvider struct {
@@ -308,6 +309,11 @@ func (p *MeilisearchSearchProvider) buildMeilisearchSearchRequest(ctx context.Co
 	if !p.shouldUseSemanticSearch(req) {
 		return searchReq, ""
 	}
+	if p.config.Coverage != nil {
+		if ready, reason := p.config.Coverage.CoverageReady(req.ItemTypes); !ready {
+			return searchReq, "semantic_not_ready: " + reason
+		}
+	}
 	if p.config.Vectorizer == nil {
 		return searchReq, "semantic search enabled but query vectorizer is unavailable"
 	}
@@ -457,7 +463,13 @@ func (p *MeilisearchSearchProvider) shouldTripCircuit(err error) bool {
 	}
 	var httpErr *meilisearchHTTPError
 	if errors.As(err, &httpErr) {
-		return httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden
+		return httpErr.StatusCode == http.StatusUnauthorized ||
+			httpErr.StatusCode == http.StatusForbidden ||
+			httpErr.StatusCode >= http.StatusInternalServerError
+	}
+	var decodeErr *meilisearchDecodeError
+	if errors.As(err, &decodeErr) {
+		return true
 	}
 	return false
 }
