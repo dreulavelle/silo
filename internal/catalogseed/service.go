@@ -209,7 +209,7 @@ func (s *Service) ImportWithProgress(ctx context.Context, data []byte, opts Impo
 		}); err != nil {
 			return nil, err
 		}
-		if err := catalog.EnqueueSearchIndexUpserts(ctx, tx, catalogSeedSearchUpsertIDs(itemStates, bundle.Embeddings)); err != nil {
+		if err := catalog.EnqueueSearchIndexUpserts(ctx, tx, catalogSeedSearchUpsertIDs(itemStates, bundle.Embeddings, nil, nil)); err != nil {
 			return nil, fmt.Errorf("enqueueing catalog search seed import updates: %w", err)
 		}
 		currentWork++
@@ -389,11 +389,6 @@ func (s *Service) ImportWithProgress(ctx context.Context, data []byte, opts Impo
 	}); err != nil {
 		return nil, fmt.Errorf("importing embeddings: %w", err)
 	}
-	if err := catalog.EnqueueSearchIndexUpserts(ctx, tx, catalogSeedSearchUpsertIDs(itemStates, bundle.Embeddings)); err != nil {
-		return nil, fmt.Errorf("enqueueing catalog search seed import updates: %w", err)
-	}
-	currentWork++
-	reportProgress("Importing embeddings", currentWork, totalWork)
 
 	// Batch import seasons.
 	seasonRows := make([][]any, 0, len(bundle.Seasons))
@@ -588,7 +583,12 @@ func (s *Service) ImportWithProgress(ctx context.Context, data []byte, opts Impo
 	}
 	result.LinksCreated = int(linksAffected)
 
+	if err := catalog.EnqueueSearchIndexUpserts(ctx, tx, catalogSeedSearchUpsertIDs(itemStates, bundle.Embeddings, bundle.Files, bundle.LibraryLinks)); err != nil {
+		return nil, fmt.Errorf("enqueueing catalog search seed import updates: %w", err)
+	}
+	currentWork++
 	reportProgress("Finalizing catalog import", currentWork, totalWork)
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("committing catalog seed import: %w", err)
 	}
@@ -2503,8 +2503,8 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
-func catalogSeedSearchUpsertIDs(itemStates map[string]bool, embeddings []EmbeddingRecord) []string {
-	ids := make([]string, 0, len(itemStates)+len(embeddings))
+func catalogSeedSearchUpsertIDs(itemStates map[string]bool, embeddings []EmbeddingRecord, files []FileRecord, links []LibraryLinkRecord) []string {
+	ids := make([]string, 0, len(itemStates)+len(embeddings)+len(files)+len(links))
 	for contentID, changed := range itemStates {
 		contentID = strings.TrimSpace(contentID)
 		if changed && contentID != "" {
@@ -2513,6 +2513,18 @@ func catalogSeedSearchUpsertIDs(itemStates map[string]bool, embeddings []Embeddi
 	}
 	for _, embedding := range embeddings {
 		contentID := strings.TrimSpace(embedding.MediaItemID)
+		if contentID != "" {
+			ids = append(ids, contentID)
+		}
+	}
+	for _, file := range files {
+		contentID := strings.TrimSpace(file.ContentID)
+		if contentID != "" {
+			ids = append(ids, contentID)
+		}
+	}
+	for _, link := range links {
+		contentID := strings.TrimSpace(link.ContentID)
 		if contentID != "" {
 			ids = append(ids, contentID)
 		}

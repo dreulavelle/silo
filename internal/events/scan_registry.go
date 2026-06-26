@@ -1,6 +1,7 @@
 package events
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -73,10 +74,23 @@ func (r *ScanRegistry) ListActiveLimit(limit int) []ScanRun {
 	for _, run := range r.entries {
 		if run.Status == "accepted" || run.Status == "running" {
 			runs = append(runs, run)
-			if limit > 0 && len(runs) >= limit {
-				break
-			}
 		}
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		left := runs[i]
+		right := runs[j]
+		leftStarted := left.StartedAt != nil
+		rightStarted := right.StartedAt != nil
+		if leftStarted != rightStarted {
+			return leftStarted
+		}
+		if leftStarted && !left.StartedAt.Equal(*right.StartedAt) {
+			return left.StartedAt.Before(*right.StartedAt)
+		}
+		return left.ID < right.ID
+	})
+	if limit > 0 && len(runs) > limit {
+		return runs[:limit]
 	}
 	return runs
 }

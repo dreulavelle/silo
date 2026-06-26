@@ -762,12 +762,13 @@ func (r *FolderRepository) deleteOrphanedItemsByContentID(ctx context.Context, c
 		return 0, nil, nil
 	}
 
-	imageDirs, err := collectImageDirs(ctx, r.pool, orphanIDs)
+	rawImageDirs, err := collectRawImageDirs(ctx, r.pool, orphanIDs)
 	if err != nil {
 		return 0, nil, err
 	}
 
 	var deletedIDs []string
+	var imageDirs []string
 	if err := retryOnDeadlock(ctx, func() error {
 		tx, err := r.pool.Begin(ctx)
 		if err != nil {
@@ -783,6 +784,13 @@ func (r *FolderRepository) deleteOrphanedItemsByContentID(ctx context.Context, c
 		if err != nil {
 			return fmt.Errorf("collecting deleted late orphan IDs: %w", err)
 		}
+		var attemptImageDirs []string
+		if len(attemptDeletedIDs) > 0 {
+			attemptImageDirs, err = filterUnreferencedImageDirs(ctx, tx, rawImageDirs, attemptDeletedIDs)
+			if err != nil {
+				return err
+			}
+		}
 		if err := EnqueueSearchIndexDeletes(ctx, tx, attemptDeletedIDs); err != nil {
 			return fmt.Errorf("enqueueing catalog search late orphan deletes: %w", err)
 		}
@@ -790,6 +798,7 @@ func (r *FolderRepository) deleteOrphanedItemsByContentID(ctx context.Context, c
 			return err
 		}
 		deletedIDs = attemptDeletedIDs
+		imageDirs = attemptImageDirs
 		return nil
 	}); err != nil {
 		return 0, nil, err

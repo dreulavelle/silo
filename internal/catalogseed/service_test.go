@@ -16,9 +16,17 @@ func TestCatalogSeedSearchUpsertIDsIncludesChangedItemsAndEmbeddings(t *testing.
 		{MediaItemID: "movie-1"},
 		{MediaItemID: ""},
 	}
+	files := []FileRecord{
+		{ContentID: " movie-4 "},
+		{ContentID: ""},
+	}
+	links := []LibraryLinkRecord{
+		{ContentID: "movie-5"},
+		{ContentID: "movie-2"},
+	}
 
-	got := catalogSeedSearchUpsertIDs(itemStates, embeddings)
-	want := []string{"movie-1", "movie-3", "series-1"}
+	got := catalogSeedSearchUpsertIDs(itemStates, embeddings, files, links)
+	want := []string{"movie-1", "movie-2", "movie-3", "movie-4", "movie-5", "series-1"}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("catalogSeedSearchUpsertIDs = %#v, want %#v", got, want)

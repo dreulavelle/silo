@@ -448,15 +448,24 @@ func NewRouter(deps Dependencies) chi.Router {
 		ebookAnnotationStore = handlers.NewPGEbookReaderAnnotationStore(deps.DB)
 		browseRepo := catalog.NewBrowseRepository(deps.DB)
 		itemRepo = catalog.NewItemRepository(deps.DB)
+		catalogSearchSettings, err := catalog.LoadCatalogSearchSettings(context.Background(), settingsRepo)
+		if err != nil {
+			slog.Warn("catalog search: failed to load settings; using postgres", "err", err)
+			catalogSearchSettings = catalog.DefaultCatalogSearchSettings()
+		}
 		searchIndexEvents := catalog.NewSearchIndexEventRepository(deps.DB)
-		itemRepo.WithSearchIndexEvents(searchIndexEvents)
-		catalogSearchService = catalog.NewCatalogSearchService(
-			context.Background(),
-			settingsRepo,
+		catalogSearchService = catalog.NewCatalogSearchServiceFromSettings(
+			catalogSearchSettings,
 			itemRepo,
 			searchIndexEvents,
 			deps.CatalogSearchVectorizer,
 		)
+		activeSearchProvider := catalog.SearchProviderPostgres
+		if _, ok := catalogSearchService.Provider().(*catalog.MeilisearchSearchProvider); ok {
+			activeSearchProvider = catalog.SearchProviderMeilisearch
+		}
+		searchIndexEvents.WithActiveProvider(activeSearchProvider)
+		itemRepo.WithSearchIndexEvents(searchIndexEvents)
 		episodeRepo = catalog.NewEpisodeRepository(deps.DB)
 		providerIDRepo = catalog.NewProviderIDRepository(deps.DB)
 		calendarRepo = catalog.NewCalendarRepository(deps.DB)

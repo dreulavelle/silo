@@ -214,12 +214,7 @@ func (s *Service) PollOnce(ctx context.Context) error {
 		var enqueue EnqueueResult
 		if len(targets) > 0 {
 			var eerr error
-			if eventID != 0 {
-				enqueue.Created, enqueue.Reused, eerr = s.queue.EnqueueAutoscanScans(ctx, targets, eventID)
-			} else {
-				eerr = s.queue.EnqueueScans(ctx, targets)
-				enqueue.Created = len(targets)
-			}
+			enqueue, eerr = s.enqueueScanTargets(ctx, targets, eventID)
 			if eerr != nil {
 				s.releaseClaims(ctx, claimed)
 				slog.WarnContext(ctx, "autoscan: enqueue failed", "source_id", src.ID, "err", eerr)
@@ -293,6 +288,34 @@ func (s *Service) PollOnce(ctx context.Context) error {
 		})
 	}
 	return nil
+}
+
+func (s *Service) enqueueScanTargets(ctx context.Context, targets []scantrigger.Target, eventID int64) (EnqueueResult, error) {
+	var result EnqueueResult
+	if len(targets) == 0 {
+		return result, nil
+	}
+	for start := 0; start < len(targets); start += maxAutoscanTargetsPerPoll {
+		end := start + maxAutoscanTargetsPerPoll
+		if end > len(targets) {
+			end = len(targets)
+		}
+		chunk := targets[start:end]
+		if eventID != 0 {
+			created, reused, err := s.queue.EnqueueAutoscanScans(ctx, chunk, eventID)
+			if err != nil {
+				return result, err
+			}
+			result.Created += created
+			result.Reused += reused
+			continue
+		}
+		if err := s.queue.EnqueueScans(ctx, chunk); err != nil {
+			return result, err
+		}
+		result.Created += len(chunk)
+	}
+	return result, nil
 }
 
 func (s *Service) createEvent(ctx context.Context, src Source, marker string, startedAt time.Time) (int64, bool) {

@@ -327,7 +327,7 @@ func (p *MeilisearchSearchProvider) buildMeilisearchSearchRequest(ctx context.Co
 }
 
 func (p *MeilisearchSearchProvider) shouldUseSemanticSearch(req CatalogSearchRequest) bool {
-	if p == nil || !p.config.SemanticEnabled || req.SkipTotal {
+	if p == nil || !p.config.SemanticEnabled {
 		return false
 	}
 	return len(strings.Fields(normalizeCatalogSearchQueryForVector(req.Query))) >= 3

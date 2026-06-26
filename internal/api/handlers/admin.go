@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -2216,7 +2217,7 @@ func (h *AdminHandler) HandleUpdateSetting(w http.ResponseWriter, r *http.Reques
 		req.Value = strconv.FormatBool(enabled)
 	case catalog.SearchSettingMeilisearchSemanticRatio:
 		ratio, err := strconv.ParseFloat(strings.TrimSpace(req.Value), 64)
-		if err != nil || ratio < 0 || ratio > 1 {
+		if err != nil || math.IsNaN(ratio) || ratio < 0 || ratio > 1 {
 			writeError(w, http.StatusBadRequest, "bad_request", "catalog.search.meilisearch.semantic_ratio must be a number between 0 and 1")
 			return
 		}

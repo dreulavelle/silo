@@ -1206,10 +1206,10 @@ func (r *ItemRepository) buildSearchSQLWithTotal(query string, itemTypes []strin
 		totalColumn = ", COUNT(*) OVER () AS total_count"
 	}
 	dataSQL = scoredCTE + statsCTE + fmt.Sprintf(`
-		SELECT %s%s
-		%s
-		ORDER BY exact_title_match DESC, contiguous_title_match DESC, year_match DESC, title_rank DESC, title_prefix_rank DESC, overview_rank DESC, LOWER(title) ASC, content_id ASC
-		LIMIT $%d OFFSET $%d`, itemColumns, totalColumn, postFilter, argIdx, argIdx+1)
+			SELECT %s%s
+			%s
+			ORDER BY exact_title_match DESC, contiguous_title_match DESC, year_match DESC, phrase_rank DESC, title_rank DESC, title_prefix_rank DESC, overview_rank DESC, LOWER(title) ASC, content_id ASC
+			LIMIT $%d OFFSET $%d`, itemColumns, totalColumn, postFilter, argIdx, argIdx+1)
 	countSQL = scoredCTE + statsCTE + fmt.Sprintf(`
 		SELECT COUNT(*)
 		%s`, postFilter)

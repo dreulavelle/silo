@@ -67,3 +67,27 @@ func TestEnqueueSearchIndexUpsertsSkipsEmptyInput(t *testing.T) {
 		t.Fatalf("expected no Exec calls for empty input, got %d", execer.calls)
 	}
 }
+
+func TestEnqueueSearchIndexUpsertSkipsWhenProviderIsPostgres(t *testing.T) {
+	execer := &recordingSearchIndexExecer{}
+	repo := NewSearchIndexEventRepository(nil).WithActiveProvider(SearchProviderPostgres)
+
+	if err := repo.EnqueueUpsert(context.Background(), execer, "movie-1"); err != nil {
+		t.Fatalf("EnqueueUpsert returned error: %v", err)
+	}
+	if execer.calls != 0 {
+		t.Fatalf("expected no Exec calls when provider is postgres, got %d", execer.calls)
+	}
+}
+
+func TestEnqueueSearchIndexUpsertRunsWhenProviderIsMeilisearch(t *testing.T) {
+	execer := &recordingSearchIndexExecer{}
+	repo := NewSearchIndexEventRepository(nil).WithActiveProvider(SearchProviderMeilisearch)
+
+	if err := repo.EnqueueUpsert(context.Background(), execer, "movie-1"); err != nil {
+		t.Fatalf("EnqueueUpsert returned error: %v", err)
+	}
+	if execer.calls != 1 {
+		t.Fatalf("expected one Exec call when provider is meilisearch, got %d", execer.calls)
+	}
+}

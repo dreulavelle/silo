@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -214,7 +215,7 @@ func CatalogSearchSettingsFromMap(values map[string]string) (CatalogSearchSettin
 	}
 	if raw := strings.TrimSpace(values[SearchSettingMeilisearchSemanticRatio]); raw != "" {
 		ratio, err := strconv.ParseFloat(raw, 64)
-		if err != nil || ratio < 0 || ratio > 1 {
+		if err != nil || math.IsNaN(ratio) || ratio < 0 || ratio > 1 {
 			return settings, fmt.Errorf("%s must be a number between 0 and 1", SearchSettingMeilisearchSemanticRatio)
 		}
 		settings.SemanticRatio = ratio

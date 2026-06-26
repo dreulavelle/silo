@@ -56,6 +56,7 @@ func TestCatalogSearchSettingsFromMapRejectsOutOfRangeTuning(t *testing.T) {
 		{SearchSettingMeilisearchSemanticEnabled: "sometimes"},
 		{SearchSettingMeilisearchSemanticRatio: "-0.1"},
 		{SearchSettingMeilisearchSemanticRatio: "1.1"},
+		{SearchSettingMeilisearchSemanticRatio: "NaN"},
 		{SearchSettingMeilisearchEmbedder: "bad.name"},
 	}
 
@@ -191,7 +192,7 @@ func TestMeilisearchSearchRequestBuildsHybridWhenSemanticEnabled(t *testing.T) {
 	}
 }
 
-func TestMeilisearchSearchRequestSkipsHybridForApproximateInteractiveSearch(t *testing.T) {
+func TestMeilisearchSearchRequestBuildsHybridForApproximateInteractiveSearch(t *testing.T) {
 	vectorizer := &fakeCatalogSearchVectorizer{vector: []float32{0.5, 0.25}}
 	provider := &MeilisearchSearchProvider{
 		config: MeilisearchProviderConfig{
@@ -203,17 +204,17 @@ func TestMeilisearchSearchRequestSkipsHybridForApproximateInteractiveSearch(t *t
 		},
 	}
 	req, fallback := provider.buildMeilisearchSearchRequest(context.Background(), CatalogSearchRequest{
-		Query:     "sponge",
+		Query:     "found family space opera",
 		SkipTotal: true,
 	})
 	if fallback != "" {
 		t.Fatalf("fallback = %q, want empty", fallback)
 	}
-	if req.Vector != nil || req.Hybrid != nil {
-		t.Fatalf("approximate interactive search should stay keyword-only: %#v", req)
+	if req.Vector == nil || req.Hybrid == nil {
+		t.Fatalf("approximate interactive search should include hybrid search: %#v", req)
 	}
-	if vectorizer.calls != 0 {
-		t.Fatalf("interactive search should not call vectorizer, calls = %d", vectorizer.calls)
+	if vectorizer.calls != 1 {
+		t.Fatalf("interactive search should call vectorizer once, calls = %d", vectorizer.calls)
 	}
 }
 

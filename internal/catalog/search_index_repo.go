@@ -42,11 +42,26 @@ type SearchIndexState struct {
 }
 
 type SearchIndexEventRepository struct {
-	pool *pgxpool.Pool
+	pool                *pgxpool.Pool
+	activeProvider      string
+	activeProviderKnown bool
 }
 
 func NewSearchIndexEventRepository(pool *pgxpool.Pool) *SearchIndexEventRepository {
 	return &SearchIndexEventRepository{pool: pool}
+}
+
+func (r *SearchIndexEventRepository) WithActiveProvider(provider string) *SearchIndexEventRepository {
+	if r == nil {
+		return nil
+	}
+	provider = normalizeCatalogSearchProvider(provider)
+	if provider == "" {
+		provider = SearchProviderPostgres
+	}
+	r.activeProvider = provider
+	r.activeProviderKnown = true
+	return r
 }
 
 func (r *SearchIndexEventRepository) EnqueueUpsert(ctx context.Context, execer itemExecer, contentID string) error {
@@ -61,14 +76,14 @@ func (r *SearchIndexEventRepository) EnqueueUpserts(ctx context.Context, execer 
 	if len(contentIDs) == 0 {
 		return nil
 	}
-	_, err := execer.Exec(ctx, `
+	if ok, err := r.shouldEnqueue(ctx, execer); err != nil || !ok {
+		return err
+	}
+	err := execSearchIndexEventInsert(ctx, execer, `
 		INSERT INTO catalog_search_index_events (provider, action, content_id, previous_content_id)
 		SELECT $1, $2, ids.content_id, ''
 		FROM unnest($3::text[]) AS ids(content_id)
 	`, SearchProviderMeilisearch, SearchIndexEventUpsert, contentIDs)
-	if isSearchIndexSchemaUnavailable(err) {
-		return nil
-	}
 	return err
 }
 
@@ -84,14 +99,14 @@ func (r *SearchIndexEventRepository) EnqueueDeletes(ctx context.Context, execer 
 	if len(contentIDs) == 0 {
 		return nil
 	}
-	_, err := execer.Exec(ctx, `
+	if ok, err := r.shouldEnqueue(ctx, execer); err != nil || !ok {
+		return err
+	}
+	err := execSearchIndexEventInsert(ctx, execer, `
 		INSERT INTO catalog_search_index_events (provider, action, content_id, previous_content_id)
 		SELECT $1, $2, ids.content_id, ''
 		FROM unnest($3::text[]) AS ids(content_id)
 	`, SearchProviderMeilisearch, SearchIndexEventDelete, contentIDs)
-	if isSearchIndexSchemaUnavailable(err) {
-		return nil
-	}
 	return err
 }
 
@@ -108,14 +123,115 @@ func (r *SearchIndexEventRepository) enqueue(ctx context.Context, execer itemExe
 	if contentID == "" {
 		return nil
 	}
-	_, err := execer.Exec(ctx, `
+	if ok, err := r.shouldEnqueue(ctx, execer); err != nil || !ok {
+		return err
+	}
+	err := execSearchIndexEventInsert(ctx, execer, `
 		INSERT INTO catalog_search_index_events (provider, action, content_id, previous_content_id)
 		VALUES ($1, $2, $3, $4)
 	`, provider, action, contentID, previousContentID)
+	return err
+}
+
+func (r *SearchIndexEventRepository) shouldEnqueue(ctx context.Context, execer itemExecer) (bool, error) {
+	if r == nil || execer == nil {
+		return false, nil
+	}
+	if r.activeProviderKnown {
+		return r.activeProvider == SearchProviderMeilisearch, nil
+	}
+	return searchIndexProviderEnabled(ctx, execer)
+}
+
+type searchIndexProviderQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func searchIndexProviderEnabled(ctx context.Context, execer itemExecer) (bool, error) {
+	querier, ok := execer.(searchIndexProviderQuerier)
+	if !ok {
+		return true, nil
+	}
+	if tx, ok := execer.(pgx.Tx); ok {
+		return searchIndexProviderEnabledTx(ctx, tx)
+	}
+	enabled, err := querySearchIndexProviderEnabled(ctx, querier)
+	if isSearchIndexSchemaUnavailable(err) {
+		return false, nil
+	}
+	return enabled, err
+}
+
+func searchIndexProviderEnabledTx(ctx context.Context, tx pgx.Tx) (bool, error) {
+	if _, err := tx.Exec(ctx, "SAVEPOINT catalog_search_index_provider_check"); err != nil {
+		return false, err
+	}
+	enabled, err := querySearchIndexProviderEnabled(ctx, tx)
+	if err == nil {
+		if _, releaseErr := tx.Exec(ctx, "RELEASE SAVEPOINT catalog_search_index_provider_check"); releaseErr != nil {
+			return false, releaseErr
+		}
+		return enabled, nil
+	}
+	if rollbackErr := rollbackSearchIndexSavepoint(ctx, tx, "catalog_search_index_provider_check"); rollbackErr != nil {
+		return false, rollbackErr
+	}
+	if isSearchIndexSchemaUnavailable(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func querySearchIndexProviderEnabled(ctx context.Context, querier searchIndexProviderQuerier) (bool, error) {
+	var enabled bool
+	err := querier.QueryRow(ctx, `
+		SELECT lower(COALESCE(
+			(SELECT value FROM server_settings WHERE key = $1),
+			$2
+		)) = $3
+	`, SearchSettingProvider, SearchProviderPostgres, SearchProviderMeilisearch).Scan(&enabled)
+	return enabled, err
+}
+
+func execSearchIndexEventInsert(ctx context.Context, execer itemExecer, sql string, args ...any) error {
+	if tx, ok := execer.(pgx.Tx); ok {
+		return execSearchIndexEventInsertTx(ctx, tx, sql, args...)
+	}
+	_, err := execer.Exec(ctx, sql, args...)
 	if isSearchIndexSchemaUnavailable(err) {
 		return nil
 	}
 	return err
+}
+
+func execSearchIndexEventInsertTx(ctx context.Context, tx pgx.Tx, sql string, args ...any) error {
+	if _, err := tx.Exec(ctx, "SAVEPOINT catalog_search_index_events_insert"); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, sql, args...)
+	if err == nil {
+		if _, releaseErr := tx.Exec(ctx, "RELEASE SAVEPOINT catalog_search_index_events_insert"); releaseErr != nil {
+			return releaseErr
+		}
+		return nil
+	}
+	if isSearchIndexSchemaUnavailable(err) {
+		if rollbackErr := rollbackSearchIndexSavepoint(ctx, tx, "catalog_search_index_events_insert"); rollbackErr != nil {
+			return rollbackErr
+		}
+		return nil
+	}
+	return err
+}
+
+func rollbackSearchIndexSavepoint(ctx context.Context, tx pgx.Tx, name string) error {
+	if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+name); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT "+name); err != nil {
+		return err
+	}
+	return nil
 }
 
 func EnqueueSearchIndexUpsert(ctx context.Context, execer itemExecer, contentID string) error {

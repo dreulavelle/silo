@@ -418,6 +418,7 @@ func TestAdminUpdateCatalogSearchSemanticSettingsValidation(t *testing.T) {
 		{key: catalog.SearchSettingMeilisearchSemanticEnabled, value: "sometimes"},
 		{key: catalog.SearchSettingMeilisearchSemanticRatio, value: "-0.01"},
 		{key: catalog.SearchSettingMeilisearchSemanticRatio, value: "1.01"},
+		{key: catalog.SearchSettingMeilisearchSemanticRatio, value: "NaN"},
 		{key: catalog.SearchSettingMeilisearchEmbedder, value: "bad.name"},
 	}
 	for _, tc := range invalid {
