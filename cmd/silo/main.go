@@ -1881,6 +1881,8 @@ func main() {
 			AccessResolver: audiobooks.NewABSAccessResolver(absUserRepo, userStoreProvider),
 			Recs:           recommendations.NewRepo(deps.DB),
 			Detail:         absDetailSvc,
+			SessionMgr:     sessionMgr,
+			SessionSyncer:  deps.SessionSyncer,
 		}
 		absH := audiobooksService.BuildABSHandler(absHDeps)
 		deps.ABSHandler = absH
