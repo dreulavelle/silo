@@ -27,14 +27,16 @@ type CatalogResult struct {
 	HasMore    bool
 	TotalExact bool
 	SnapshotAt time.Time // pagination fence timestamp
-	// Provider, Mode, SemanticUsed and FallbackReason are per-query search
-	// diagnostics. They are only populated on the direct-search path (where a
-	// CatalogSearchProvider actually ran); browse / preview / grouped paths
-	// leave them zero-valued so the handler omits search_diagnostics.
-	Provider       string
-	Mode           string
-	SemanticUsed   bool
-	FallbackReason string
+	// Provider, Mode, SemanticUsed, FallbackReason and IndexPendingEvents are
+	// per-query search diagnostics. They are only populated on the direct-search
+	// path (where a CatalogSearchProvider actually ran); browse / preview /
+	// grouped paths leave them zero-valued so the handler omits
+	// search_diagnostics.
+	Provider           string
+	Mode               string
+	SemanticUsed       bool
+	FallbackReason     string
+	IndexPendingEvents int
 }
 
 type CatalogFiltersResult struct {
@@ -297,14 +299,15 @@ func (r *CatalogResolver) resolveDirectSearchSource(ctx context.Context, req Cat
 	}
 
 	return &CatalogResult{
-		Items:          result.Items,
-		Total:          result.Total,
-		HasMore:        result.HasMore,
-		TotalExact:     result.TotalExact,
-		Provider:       result.Provider,
-		Mode:           result.Mode,
-		SemanticUsed:   result.SemanticUsed,
-		FallbackReason: result.FallbackReason,
+		Items:              result.Items,
+		Total:              result.Total,
+		HasMore:            result.HasMore,
+		TotalExact:         result.TotalExact,
+		Provider:           result.Provider,
+		Mode:               result.Mode,
+		SemanticUsed:       result.SemanticUsed,
+		FallbackReason:     result.FallbackReason,
+		IndexPendingEvents: result.IndexPendingEvents,
 	}, nil
 }
 

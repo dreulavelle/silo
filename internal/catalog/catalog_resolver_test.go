@@ -403,10 +403,11 @@ func TestResolveDirectSearchSource_PlumbsDiagnostics(t *testing.T) {
 		{
 			name: "hybrid survived",
 			result: &CatalogSearchResult{
-				Items:        []*models.MediaItem{},
-				Provider:     SearchProviderMeilisearch,
-				Mode:         "hybrid",
-				SemanticUsed: true,
+				Items:              []*models.MediaItem{},
+				Provider:           SearchProviderMeilisearch,
+				Mode:               "hybrid",
+				SemanticUsed:       true,
+				IndexPendingEvents: 7,
 			},
 		},
 	}
@@ -436,6 +437,9 @@ func TestResolveDirectSearchSource_PlumbsDiagnostics(t *testing.T) {
 			}
 			if got.FallbackReason != tc.result.FallbackReason {
 				t.Fatalf("FallbackReason = %q, want %q", got.FallbackReason, tc.result.FallbackReason)
+			}
+			if got.IndexPendingEvents != tc.result.IndexPendingEvents {
+				t.Fatalf("IndexPendingEvents = %d, want %d", got.IndexPendingEvents, tc.result.IndexPendingEvents)
 			}
 		})
 	}

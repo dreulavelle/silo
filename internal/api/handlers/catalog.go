@@ -65,12 +65,14 @@ type catalogResponse struct {
 // /api/v1/catalog only when a relevance-sorted search actually ran through a
 // CatalogSearchProvider. mode/semantic_used reflect POST-downgrade reality
 // (a hybrid request that fell back to keyword reports mode="keyword",
-// semantic_used=false). fallback_reason is omitted when empty.
+// semantic_used=false). fallback_reason and index_pending_updates are omitted
+// when empty.
 type searchDiagnostics struct {
-	Provider       string `json:"provider"`
-	Mode           string `json:"mode"`
-	SemanticUsed   bool   `json:"semantic_used"`
-	FallbackReason string `json:"fallback_reason,omitempty"`
+	Provider            string `json:"provider"`
+	Mode                string `json:"mode"`
+	SemanticUsed        bool   `json:"semantic_used"`
+	FallbackReason      string `json:"fallback_reason,omitempty"`
+	IndexPendingUpdates int    `json:"index_pending_updates,omitempty"`
 }
 
 type catalogFiltersResponse struct {
@@ -234,10 +236,11 @@ func (h *CatalogHandler) writeCatalogResponse(w http.ResponseWriter, result *cat
 	var diag *searchDiagnostics
 	if result.Provider != "" {
 		diag = &searchDiagnostics{
-			Provider:       result.Provider,
-			Mode:           result.Mode,
-			SemanticUsed:   result.SemanticUsed,
-			FallbackReason: result.FallbackReason,
+			Provider:            result.Provider,
+			Mode:                result.Mode,
+			SemanticUsed:        result.SemanticUsed,
+			FallbackReason:      result.FallbackReason,
+			IndexPendingUpdates: result.IndexPendingEvents,
 		}
 	}
 

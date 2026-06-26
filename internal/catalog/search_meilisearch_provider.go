@@ -38,6 +38,11 @@ var meilisearchTitleSearchAttributes = []string{
 	"title_variants",
 }
 
+type meilisearchIndexStateStore interface {
+	GetState(ctx context.Context, provider string) (SearchIndexState, error)
+	PendingCount(ctx context.Context, provider string) (int, error)
+}
+
 type MeilisearchProviderConfig struct {
 	URL              string
 	APIKey           string
@@ -58,7 +63,7 @@ type MeilisearchProviderConfig struct {
 
 type MeilisearchSearchProvider struct {
 	itemRepo  *ItemRepository
-	stateRepo *SearchIndexEventRepository
+	stateRepo meilisearchIndexStateStore
 	fallback  *PostgresSearchProvider
 	client    *meilisearchClient
 	config    MeilisearchProviderConfig
@@ -127,9 +132,13 @@ func NewMeilisearchSearchProvider(
 	if err != nil {
 		return nil, err
 	}
+	var stateStore meilisearchIndexStateStore
+	if stateRepo != nil {
+		stateStore = stateRepo
+	}
 	return &MeilisearchSearchProvider{
 		itemRepo:    itemRepo,
-		stateRepo:   stateRepo,
+		stateRepo:   stateStore,
 		fallback:    fallback,
 		client:      client,
 		config:      config,
@@ -164,13 +173,9 @@ func (p *MeilisearchSearchProvider) Search(ctx context.Context, req CatalogSearc
 	if state.SchemaVersion != catalogSearchMeilisearchSchemaVersion(p.config.Embedder, p.config.IndexTypes, p.config.SemanticEnabled) {
 		return p.fallbackSearch(ctx, req, "meilisearch index schema mismatch")
 	}
-	pending, err := p.stateRepo.PendingCount(ctx, SearchProviderMeilisearch)
-	if err != nil {
-		p.markFallback("index pending state unavailable")
-		return p.fallback.Search(ctx, req)
-	}
-	if pending > 0 {
-		return p.fallbackSearch(ctx, req, "meilisearch index has pending updates")
+	pending := 0
+	if count, err := p.stateRepo.PendingCount(ctx, SearchProviderMeilisearch); err == nil && count > 0 {
+		pending = count
 	}
 
 	result, err := p.searchMeilisearch(ctx, req, state.ActiveIndexUID)
@@ -185,6 +190,7 @@ func (p *MeilisearchSearchProvider) Search(ctx context.Context, req CatalogSearc
 	} else {
 		p.clearFallback()
 	}
+	result.IndexPendingEvents = pending
 	return result, nil
 }
 

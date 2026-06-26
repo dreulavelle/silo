@@ -42,7 +42,7 @@ const (
 	DefaultMeilisearchRebuildBatchSize  = 5000
 	DefaultMeilisearchRebuildQueueDepth = 4
 	DefaultMeilisearchSemanticEnabled   = false
-	DefaultMeilisearchSemanticRatio     = 0.30
+	DefaultMeilisearchSemanticRatio     = 0.50
 	DefaultMeilisearchEmbedder          = "silo_recommendations"
 
 	MaxMeilisearchSyncBatchSize     = 10000
@@ -62,11 +62,12 @@ type CatalogSearchRequest struct {
 }
 
 type CatalogSearchResult struct {
-	Items      []*models.MediaItem
-	Total      int
-	HasMore    bool
-	TotalExact bool
-	Provider   string
+	Items              []*models.MediaItem
+	Total              int
+	HasMore            bool
+	TotalExact         bool
+	Provider           string
+	IndexPendingEvents int
 	// Mode reports which retrieval path actually served this result —
 	// "keyword" or "hybrid". For Meilisearch it reflects POST-downgrade
 	// reality (a hybrid request that fell back to keyword reports "keyword").

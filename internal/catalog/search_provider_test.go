@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCatalogSearchSettingsFromMapParsesMeilisearchTuning(t *testing.T) {
@@ -439,6 +442,79 @@ func TestMeilisearchCircuitTripsOnServerAndDecodeErrors(t *testing.T) {
 	}
 	if provider.shouldTripCircuit(context.Canceled) {
 		t.Fatal("context.Canceled should not trip circuit")
+	}
+}
+
+type fakeMeilisearchIndexStateStore struct {
+	state   SearchIndexState
+	pending int
+}
+
+func (f fakeMeilisearchIndexStateStore) GetState(context.Context, string) (SearchIndexState, error) {
+	return f.state, nil
+}
+
+func (f fakeMeilisearchIndexStateStore) PendingCount(context.Context, string) (int, error) {
+	return f.pending, nil
+}
+
+func TestMeilisearchProviderUsesActiveIndexWhenPendingUpdatesExist(t *testing.T) {
+	requests := 0
+	var gotMethod, gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"hits":[],"estimatedTotalHits":0}`))
+	}))
+	defer server.Close()
+
+	client, err := newMeilisearchClient(server.URL, "", time.Second)
+	if err != nil {
+		t.Fatalf("newMeilisearchClient: %v", err)
+	}
+
+	provider := &MeilisearchSearchProvider{
+		stateRepo: fakeMeilisearchIndexStateStore{
+			state: SearchIndexState{
+				ActiveIndexUID: "search-index",
+				SchemaVersion:  catalogSearchMeilisearchSchemaVersion(DefaultMeilisearchEmbedder, nil, false),
+			},
+			pending: 7,
+		},
+		fallback: &PostgresSearchProvider{},
+		client:   client,
+		config: MeilisearchProviderConfig{
+			BatchSize:        meilisearchDefaultBatchSize,
+			CandidateScanCap: meilisearchDefaultCandidateScanCap,
+			DeepOffsetLimit:  meilisearchDefaultDeepOffsetLimit,
+			MatchingStrategy: DefaultMeilisearchMatchingStrategy,
+			Embedder:         DefaultMeilisearchEmbedder,
+		},
+	}
+
+	result, err := provider.Search(context.Background(), CatalogSearchRequest{
+		Query: "sponge in the sea",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("Meilisearch requests = %d, want 1", requests)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/indexes/search-index/search" {
+		t.Fatalf("unexpected Meilisearch request %s %s", gotMethod, gotPath)
+	}
+	if result.Provider != SearchProviderMeilisearch {
+		t.Fatalf("provider = %q, want %q", result.Provider, SearchProviderMeilisearch)
+	}
+	if result.FallbackReason != "" {
+		t.Fatalf("fallback reason = %q, want empty", result.FallbackReason)
+	}
+	if result.IndexPendingEvents != 7 {
+		t.Fatalf("IndexPendingEvents = %d, want 7", result.IndexPendingEvents)
 	}
 }
 

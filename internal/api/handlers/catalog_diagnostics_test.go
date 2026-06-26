@@ -69,9 +69,10 @@ func TestWriteCatalogResponse_DiagnosticsKeywordFallback(t *testing.T) {
 
 func TestWriteCatalogResponse_DiagnosticsHybridOmitsFallbackReason(t *testing.T) {
 	body := decodeCatalogResponse(t, &catalog.CatalogResult{
-		Provider:     catalog.SearchProviderMeilisearch,
-		Mode:         "hybrid",
-		SemanticUsed: true,
+		Provider:           catalog.SearchProviderMeilisearch,
+		Mode:               "hybrid",
+		SemanticUsed:       true,
+		IndexPendingEvents: 7,
 	}, false)
 
 	diagRaw, ok := body["search_diagnostics"]
@@ -87,6 +88,9 @@ func TestWriteCatalogResponse_DiagnosticsHybridOmitsFallbackReason(t *testing.T)
 	}
 	if _, ok := diag["fallback_reason"]; ok {
 		t.Fatalf("fallback_reason should be omitted when empty: %v", diag)
+	}
+	if diag["index_pending_updates"].(float64) != 7 {
+		t.Fatalf("index_pending_updates = %v, want 7", diag["index_pending_updates"])
 	}
 }
 
