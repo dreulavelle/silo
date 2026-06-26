@@ -85,6 +85,16 @@ type CatalogSemanticModelProvider interface {
 	ActiveEmbeddingModel(ctx context.Context) (string, error)
 }
 
+// SemanticCoverageGate answers, on the search hot path, whether the active
+// embedding model covers enough of the requested item types to serve semantic
+// results. Implementations read an in-memory snapshot with no database access or
+// locking, and fail safe (a not-yet-computed gate reports not-ready rather than
+// panicking). The boolean reports readiness; the string is a human-readable
+// reason when not ready (empty when ready).
+type SemanticCoverageGate interface {
+	CoverageReady(itemTypes []string) (ready bool, reason string)
+}
+
 type CatalogSearchCandidateRetriever interface {
 	CandidateIDs(ctx context.Context, vector []float32, itemTypes []string, limit int) ([]string, error)
 }
