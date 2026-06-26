@@ -98,6 +98,41 @@ func TestScanPodcastFolderReturnsCanceledContext(t *testing.T) {
 	}
 }
 
+func TestListPodcastShowAudioFilesReturnsSortedAudioPaths(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "02.mp3"), []byte("audio"), 0o644); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("notes"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "01.flac"), []byte("audio"), 0o644); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+
+	got, err := listPodcastShowAudioFiles(root)
+	if err != nil {
+		t.Fatalf("listPodcastShowAudioFiles: %v", err)
+	}
+	want := []string{
+		filepath.Join(root, "01.flac"),
+		filepath.Join(root, "02.mp3"),
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("audio files = %#v, want %#v", got, want)
+	}
+}
+
+func TestListPodcastShowAudioFilesReturnsNotExistForEmptyShow(t *testing.T) {
+	_, err := listPodcastShowAudioFiles(t.TempDir())
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty podcast show error = %v, want os.ErrNotExist", err)
+	}
+}
+
 func TestResolvePodcastMediaItemReusesRootScopedContentID(t *testing.T) {
 	finder := &fakeRootContentFinder{contentID: "podcast-root-id"}
 	writer := &fakeFilesystemItemWriter{}

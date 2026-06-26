@@ -56,6 +56,11 @@ func (s *Scanner) ScanPodcastFolder(ctx context.Context, folder *models.MediaFol
 				return err
 			}
 			attempted++
+			if paths, err := listPodcastShowAudioFiles(subPath); err == nil {
+				for _, path := range paths {
+					seenPaths[path] = true
+				}
+			}
 			episodePaths, err := s.reconcilePodcastShow(ctx, folder, subPath)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
