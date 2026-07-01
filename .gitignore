@@ -69,5 +69,7 @@ docker-compose.dev.yml
 # never disturbs it and it never lands in a PR; its absence once exposed
 # Redis to the internet, so it must persist on the box.
 docker-compose.override.yml
+# Local compose customization layered onto docker-compose.yml by make dev-deploy.
+docker-compose.local.yml
 .playwright-cli/
 output/
