@@ -100,6 +100,7 @@ type MatchHints struct {
 // SearchQuery is passed to SearchProvider.Search().
 type SearchQuery struct {
 	Title                     string
+	Author                    string // optional creator hint (e.g. ebook author) folded into the search query
 	Year                      int
 	ContentType               string            // media_items.type value
 	ProviderIDs               map[string]string // Accumulated IDs from prior providers

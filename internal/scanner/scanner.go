@@ -1480,7 +1480,8 @@ func (s *Scanner) syncFolderScopedAudioLibraryState(ctx context.Context, folderI
 
 	if _, err := s.fileRepo.Pool().Exec(ctx, `
 		INSERT INTO media_item_roots (media_folder_id, canonical_root_path, content_id)
-		SELECT DISTINCT mf.media_folder_id, mf.canonical_root_path, mf.content_id
+		SELECT DISTINCT ON (mf.media_folder_id, mf.canonical_root_path)
+			mf.media_folder_id, mf.canonical_root_path, mf.content_id
 		FROM media_files mf
 		JOIN media_items mi ON mi.content_id = mf.content_id
 		WHERE mf.media_folder_id = $1

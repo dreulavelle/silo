@@ -441,6 +441,15 @@ func scopeMatchPaths(folder *models.MediaFolder, mode scopeMode, scopePath strin
 	if folder == nil {
 		return nil
 	}
+	// Audiobook/podcast/ebook/manga libraries use scanner-driven grouping where
+	// the scanner assigns content_ids by folder root. Running the concurrent
+	// match drainer while the scan writes files causes per-file content_ids to
+	// be created for unlinked files. Skip concurrent matching; the post-scan
+	// drain handles these libraries correctly.
+	switch strings.ToLower(strings.TrimSpace(folder.Type)) {
+	case "audiobook", "audiobooks", "podcast", "podcasts", "ebook", "ebooks", "manga", "comics":
+		return nil
+	}
 	switch mode {
 	case scopeModeLibrary:
 		return cleanRoots(folder.Paths)
