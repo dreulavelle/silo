@@ -102,6 +102,7 @@ export default function HistoryImportSettings() {
 
   // Plex state
   const [plexServers, setPlexServers] = useState<BrowserPlexServer[]>([]);
+  const [plexAccountToken, setPlexAccountToken] = useState("");
   const [plexServerId, setPlexServerId] = useState("");
   const [plexSavedSourceId, setPlexSavedSourceId] = useState("");
   const [plexToken, setPlexToken] = useState("");
@@ -169,16 +170,21 @@ export default function HistoryImportSettings() {
 
     void (async () => {
       try {
-        const servers = await completePlexAuthentication(pinID, returnedPlexPinCode);
+        const { accountToken, servers } = await completePlexAuthentication(
+          pinID,
+          returnedPlexPinCode,
+        );
         if (cancelled) {
           return;
         }
+        setPlexAccountToken(accountToken);
         setPlexServers(servers);
         setPlexServerId(servers[0]?.clientIdentifier ?? "");
       } catch (error) {
         if (cancelled) {
           return;
         }
+        setPlexAccountToken("");
         setPlexServers([]);
         setPlexServerId("");
         setPlexAuthError(error instanceof Error ? error.message : "Failed to finish Plex sign-in");
@@ -255,6 +261,7 @@ export default function HistoryImportSettings() {
           source: "plex",
           plex_base_url: selectedPlexOAuthServerURL,
           plex_token: selectedPlexOAuthServer.accessToken,
+          plex_account_token: plexAccountToken || undefined,
         });
         setActiveRunId(run.id);
       } else if (plexMode === "saved" && selectedPlexSavedSource) {

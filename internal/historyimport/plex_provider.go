@@ -80,10 +80,11 @@ func (p *PlexServerProvider) Fetch(ctx context.Context) ([]Record, []string, err
 	// effort: a watchlist fetch failure downgrades to a warning so the
 	// watch-history import still completes (issue #245).
 	if p.accountToken != "" {
-		items, err := p.client.FetchWatchlist(ctx, p.accountToken)
+		items, watchlistWarnings, err := p.client.FetchWatchlist(ctx, p.accountToken)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("watchlist fetch failed: %v", err))
 		} else {
+			warnings = append(warnings, watchlistWarnings...)
 			for _, item := range items {
 				records = append(records, NormalizePlexWatchlistItem(item))
 			}

@@ -212,6 +212,11 @@ type CreateRunInput struct {
 	PlexServerID     string `json:"plex_server_id,omitempty"`
 	PlexBaseURL      string `json:"plex_base_url,omitempty"`
 	PlexToken        string `json:"plex_token,omitempty"`
+	// PlexAccountToken is the plex.tv account token from a browser-side
+	// PIN/OAuth flow. PlexToken is a PMS access token in that flow and is
+	// rejected by account-level APIs (the watchlist), so clients that hold
+	// both must send both.
+	PlexAccountToken string `json:"plex_account_token,omitempty"`
 }
 
 type LoginConnectInput struct {

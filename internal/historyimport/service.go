@@ -374,7 +374,11 @@ func (s *Service) resolvePlexAuth(ctx context.Context, userID int, input CreateR
 		if input.PlexToken == "" {
 			return nil, "", fmt.Errorf("plex_token is required for browser Plex imports")
 		}
-		return &plexAuth{BaseURL: input.PlexBaseURL, Token: input.PlexToken, AccountToken: input.PlexToken}, ConnectionModePlexOAuth, nil
+		// Prefer the explicit account token: in the browser OAuth flow
+		// PlexToken is a PMS access token, which account-level APIs (the
+		// watchlist) reject. Falling back to PlexToken keeps manually pasted
+		// plex.tv account tokens working.
+		return &plexAuth{BaseURL: input.PlexBaseURL, Token: input.PlexToken, AccountToken: firstNonEmpty(input.PlexAccountToken, input.PlexToken)}, ConnectionModePlexOAuth, nil
 	}
 	if input.PlexToken != "" {
 		return nil, "", fmt.Errorf("plex_base_url is required for browser Plex imports")
@@ -394,7 +398,7 @@ func (s *Service) resolvePlexAuth(ctx context.Context, userID int, input CreateR
 		if input.PlexToken == "" {
 			return nil, "", fmt.Errorf("plex_token is required for predefined Plex sources")
 		}
-		return &plexAuth{BaseURL: source.BaseURL, Token: input.PlexToken, AccountToken: input.PlexToken}, ConnectionModePredefined, nil
+		return &plexAuth{BaseURL: source.BaseURL, Token: input.PlexToken, AccountToken: firstNonEmpty(input.PlexAccountToken, input.PlexToken)}, ConnectionModePredefined, nil
 	}
 
 	return nil, "", fmt.Errorf("plex_session_id, plex_base_url, or source_id is required for Plex imports")

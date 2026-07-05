@@ -88,9 +88,12 @@ func TestFetchWatchlistPaginatesDiscoverAPI(t *testing.T) {
 
 	client := NewPlexClient()
 	client.discoverBaseURL = server.URL
-	items, err := client.FetchWatchlist(context.Background(), "account-token-1")
+	items, warnings, err := client.FetchWatchlist(context.Background(), "account-token-1")
 	if err != nil {
 		t.Fatalf("FetchWatchlist: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none (all items carried guids)", warnings)
 	}
 	if gotToken != "account-token-1" {
 		t.Fatalf("token header = %q, want account token", gotToken)
@@ -103,19 +106,108 @@ func TestFetchWatchlistPaginatesDiscoverAPI(t *testing.T) {
 	}
 }
 
+// The discover listing does not honor includeGuids in practice: items arrive
+// without external ids, and some detail responses key their payload on
+// "Video" instead of "Metadata". Both must be handled or matching silently
+// degrades to exact title/year.
+func TestFetchWatchlistResolvesGuidsViaItemMetadata(t *testing.T) {
+	detailCalls := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/library/sections/watchlist/all":
+			_, _ = fmt.Fprint(w, `{"MediaContainer":{"totalSize":2,"Metadata":[
+				{"ratingKey":"wl-movie","type":"movie","title":"Dune: Part Two","year":2024},
+				{"ratingKey":"wl-show","type":"show","title":"Severance","year":2022}
+			]}}`)
+		case "/library/metadata/wl-movie":
+			detailCalls["wl-movie"]++
+			// Movie detail keyed on "Video" (discover inconsistency).
+			_, _ = fmt.Fprint(w, `{"MediaContainer":{"Video":[
+				{"ratingKey":"wl-movie","type":"movie","title":"Dune: Part Two","year":2024,
+				 "Guid":[{"id":"imdb://tt15239678"},{"id":"tmdb://693134"}]}
+			]}}`)
+		case "/library/metadata/wl-show":
+			detailCalls["wl-show"]++
+			_, _ = fmt.Fprint(w, `{"MediaContainer":{"Metadata":[
+				{"ratingKey":"wl-show","type":"show","title":"Severance","year":2022,
+				 "Guid":[{"id":"tvdb://371980"}]}
+			]}}`)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewPlexClient()
+	client.discoverBaseURL = server.URL
+	items, warnings, err := client.FetchWatchlist(context.Background(), "tok")
+	if err != nil {
+		t.Fatalf("FetchWatchlist: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none (all ids resolved)", warnings)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2", len(items))
+	}
+	if detailCalls["wl-movie"] != 1 || detailCalls["wl-show"] != 1 {
+		t.Fatalf("detail fetches = %v, want one per id-less item", detailCalls)
+	}
+	movie := NormalizePlexWatchlistItem(items[0])
+	if movie.IMDbID != "tt15239678" || movie.TMDBID != "693134" {
+		t.Fatalf("movie ids = imdb %q tmdb %q, want resolved from detail fetch", movie.IMDbID, movie.TMDBID)
+	}
+	show := NormalizePlexWatchlistItem(items[1])
+	if show.TVDBID != "371980" {
+		t.Fatalf("show tvdb id = %q, want resolved from detail fetch", show.TVDBID)
+	}
+}
+
+// A failed per-item metadata fetch must not sink the watchlist: the item
+// falls back to title/year matching and the fetch reports one warning.
+func TestFetchWatchlistWarnsWhenGuidResolutionFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/library/sections/watchlist/all":
+			_, _ = fmt.Fprint(w, `{"MediaContainer":{"totalSize":1,"Metadata":[
+				{"ratingKey":"wl-1","type":"movie","title":"Dune: Part Two","year":2024}
+			]}}`)
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	client := NewPlexClient()
+	client.discoverBaseURL = server.URL
+	items, warnings, err := client.FetchWatchlist(context.Background(), "tok")
+	if err != nil {
+		t.Fatalf("FetchWatchlist: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Dune: Part Two" {
+		t.Fatalf("items = %+v, want the listing entry kept", items)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want exactly one unresolved-ids warning", warnings)
+	}
+}
+
 // Guard against page-size regressions: a server reporting a huge total but
 // returning empty pages must not loop forever.
 func TestFetchWatchlistStopsOnEmptyPage(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		fmt.Fprint(w, `{"MediaContainer":{"totalSize":999,"Metadata":[]}}`)
+		_, _ = fmt.Fprint(w, `{"MediaContainer":{"totalSize":999,"Metadata":[]}}`)
 	}))
 	defer server.Close()
 
 	client := NewPlexClient()
 	client.discoverBaseURL = server.URL
-	items, err := client.FetchWatchlist(context.Background(), "tok")
+	items, _, err := client.FetchWatchlist(context.Background(), "tok")
 	if err != nil {
 		t.Fatalf("FetchWatchlist: %v", err)
 	}

@@ -151,12 +151,25 @@ type plexMediaContainer struct {
 		TotalSize int        `json:"totalSize"`
 		Offset    int        `json:"offset"`
 		Metadata  []PlexItem `json:"Metadata"`
+		// Video mirrors Metadata: the discover API inconsistently keys some
+		// responses on "Video" instead of "Metadata" (movie items in
+		// particular), so both must be decoded.
+		Video     []PlexItem `json:"Video"`
 		Directory []struct {
 			Key   string `json:"key"`
 			Type  string `json:"type"`
 			Title string `json:"title"`
 		} `json:"Directory"`
 	} `json:"MediaContainer"`
+}
+
+// items returns the container's media entries regardless of whether the
+// upstream keyed them on "Metadata" or "Video".
+func (c *plexMediaContainer) items() []PlexItem {
+	if len(c.MediaContainer.Metadata) > 0 {
+		return c.MediaContainer.Metadata
+	}
+	return c.MediaContainer.Video
 }
 
 type PlexItem struct {
@@ -268,7 +281,12 @@ func (c *PlexClient) fetchSectionItems(ctx context.Context, baseURL, token, sect
 // Plex discover API. It authenticates with the plex.tv ACCOUNT token (from
 // the PIN/OAuth session), not a server access token: the watchlist belongs
 // to the account, not to any PMS.
-func (c *PlexClient) FetchWatchlist(ctx context.Context, accountToken string) ([]PlexItem, error) {
+//
+// The discover listing does not honor includeGuids, so items usually arrive
+// without external ids. Each id-less item gets a follow-up per-item metadata
+// fetch to resolve its Guid array; failures there degrade to warnings so the
+// rest of the watchlist still imports (matching falls back to title/year).
+func (c *PlexClient) FetchWatchlist(ctx context.Context, accountToken string) ([]PlexItem, []string, error) {
 	base := c.discoverBaseURL
 	if base == "" {
 		base = plexDiscoverBaseURL
@@ -283,20 +301,63 @@ func (c *PlexClient) FetchWatchlist(ctx context.Context, accountToken string) ([
 		reqURL := fmt.Sprintf("%s/library/sections/watchlist/all?%s", base, query.Encode())
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		c.setPlexHeaders(req, accountToken)
 		var container plexMediaContainer
 		if err := c.doJSON(req, &container); err != nil {
-			return nil, fmt.Errorf("fetching Plex watchlist (offset %d): %w", offset, err)
+			return nil, nil, fmt.Errorf("fetching Plex watchlist (offset %d): %w", offset, err)
 		}
-		allItems = append(allItems, container.MediaContainer.Metadata...)
-		offset += len(container.MediaContainer.Metadata)
-		if offset >= container.MediaContainer.TotalSize || len(container.MediaContainer.Metadata) == 0 {
+		items := container.items()
+		allItems = append(allItems, items...)
+		offset += len(items)
+		if offset >= container.MediaContainer.TotalSize || len(items) == 0 {
 			break
 		}
 	}
-	return allItems, nil
+
+	var warnings []string
+	unresolved := 0
+	for i := range allItems {
+		if len(allItems[i].Guid) > 0 {
+			continue
+		}
+		detail, err := c.fetchWatchlistItemMetadata(ctx, base, accountToken, allItems[i].RatingKey)
+		if err != nil || detail == nil {
+			unresolved++
+			continue
+		}
+		allItems[i].Guid = detail.Guid
+		if allItems[i].Year == 0 {
+			allItems[i].Year = detail.Year
+		}
+	}
+	if unresolved > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"watchlist: could not resolve external ids for %d of %d items; those fall back to exact title/year matching",
+			unresolved, len(allItems)))
+	}
+	return allItems, warnings, nil
+}
+
+// fetchWatchlistItemMetadata resolves one watchlist entry's full metadata
+// (including its external-id Guid array) from the discover API.
+func (c *PlexClient) fetchWatchlistItemMetadata(ctx context.Context, base, accountToken, ratingKey string) (*PlexItem, error) {
+	reqURL := fmt.Sprintf("%s/library/metadata/%s", base, url.PathEscape(ratingKey))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setPlexHeaders(req, accountToken)
+	var container plexMediaContainer
+	if err := c.doJSON(req, &container); err != nil {
+		return nil, fmt.Errorf("fetching Plex watchlist metadata for %s: %w", ratingKey, err)
+	}
+	items := container.items()
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return &items[0], nil
 }
 
 func (c *PlexClient) FetchOnDeck(ctx context.Context, baseURL, token string) ([]PlexItem, error) {

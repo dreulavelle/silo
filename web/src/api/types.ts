@@ -480,6 +480,7 @@ export interface CreateHistoryImportRunRequest {
   plex_server_id?: string;
   plex_base_url?: string;
   plex_token?: string;
+  plex_account_token?: string;
 }
 
 export interface CreateHistoryImportSourceRequest {
