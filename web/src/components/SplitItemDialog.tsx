@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Folder, Search, Scissors } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 import type {
   ItemFile,
   ItemMatchSearchRequest,
+  ItemSplitRequest,
   ItemSplitResponse,
   MatchCandidate,
   SplitHistoryMode,
@@ -69,11 +70,9 @@ export default function SplitItemDialog({ item, open, onOpenChange }: SplitItemD
   const splitMutation = useSplitItem();
   const candidates = searchMutation.data?.candidates ?? [];
 
-  // Any change to the plan invalidates a previously fetched preview.
-  const resetPreview = useCallback(() => setPreview(null), []);
-  useEffect(() => {
-    resetPreview();
-  }, [selectedIds, selectedCandidate, detachUnmatched, historyMode, resetPreview]);
+  // Monotonic token so a slow dry-run response for an outdated plan can't
+  // overwrite the preview of the current one.
+  const previewToken = useRef(0);
 
   const filesByRoot = useMemo(() => {
     const groups = new Map<string, ItemFile[]>();
@@ -129,47 +128,54 @@ export default function SplitItemDialog({ item, open, onOpenChange }: SplitItemD
 
   const targetChosen = detachUnmatched || selectedCandidate !== null;
   const selectionValid = selectedIds.size > 0 && selectedIds.size < files.length;
-  const canSubmit = selectionValid && targetChosen && !splitMutation.isPending;
+  const planValid = selectionValid && targetChosen;
 
-  const submit = useCallback(
-    (dryRun: boolean) => {
-      splitMutation.mutate(
-        {
-          contentId: item.content_id,
-          request: {
-            file_ids: [...selectedIds],
-            target: detachUnmatched
-              ? { unmatched: true }
-              : {
-                  provider_ids: selectedCandidate?.provider_ids,
-                  title: selectedCandidate?.title,
-                  year: selectedCandidate?.year || undefined,
-                },
-            history_mode: historyMode,
-            dry_run: dryRun,
+  const buildRequest = useCallback(
+    (dryRun: boolean): ItemSplitRequest => ({
+      file_ids: [...selectedIds],
+      target: detachUnmatched
+        ? { unmatched: true }
+        : {
+            provider_ids: selectedCandidate?.provider_ids,
+            title: selectedCandidate?.title,
+            year: selectedCandidate?.year || undefined,
           },
-        },
+      history_mode: historyMode,
+      dry_run: dryRun,
+    }),
+    [selectedIds, detachUnmatched, selectedCandidate, historyMode],
+  );
+
+  // react-query guarantees `mutate` is referentially stable, so the effect
+  // below only re-runs when the plan itself changes.
+  const { mutate: runSplit } = splitMutation;
+
+  // Any change to the plan invalidates the previous preview; once the plan is
+  // valid, a debounced dry run fetches a fresh one automatically.
+  useEffect(() => {
+    previewToken.current += 1;
+    setPreview(null);
+    if (!open || !planValid) return;
+    const token = previewToken.current;
+    const timer = setTimeout(() => {
+      runSplit(
+        { contentId: item.content_id, request: buildRequest(true) },
         {
           onSuccess: (result) => {
-            if (dryRun) {
-              setPreview(result);
-            } else {
-              onOpenChange(false);
-            }
+            if (token === previewToken.current) setPreview(result);
           },
         },
       );
-    },
-    [
-      splitMutation,
-      item.content_id,
-      selectedIds,
-      detachUnmatched,
-      selectedCandidate,
-      historyMode,
-      onOpenChange,
-    ],
-  );
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [open, planValid, buildRequest, runSplit, item.content_id]);
+
+  const confirmSplit = useCallback(() => {
+    runSplit(
+      { contentId: item.content_id, request: buildRequest(false) },
+      { onSuccess: () => onOpenChange(false) },
+    );
+  }, [runSplit, item.content_id, buildRequest, onOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -384,6 +390,11 @@ export default function SplitItemDialog({ item, open, onOpenChange }: SplitItemD
             </p>
           </section>
 
+          {planValid && !preview && (
+            <section className="bg-muted/30 text-muted-foreground rounded-lg border px-3 py-2 text-sm">
+              Previewing…
+            </section>
+          )}
           {preview && (
             <section className="bg-muted/30 space-y-1 rounded-lg border px-3 py-2 text-sm">
               <div className="font-medium">
@@ -403,10 +414,12 @@ export default function SplitItemDialog({ item, open, onOpenChange }: SplitItemD
                 </li>
                 <li>{preview.reattribution.downloads} downloads move</li>
                 {preview.episode_pairs > 0 && <li>{preview.episode_pairs} episodes re-anchored</li>}
-                {preview.root_overrides.length + preview.file_overrides.length > 0 && (
+                {(preview.root_overrides?.length ?? 0) + (preview.file_overrides?.length ?? 0) >
+                  0 && (
                   <li>
-                    {preview.root_overrides.length} folder / {preview.file_overrides.length} file
-                    identity override{"(s)"} pinned for future scans
+                    {preview.root_overrides?.length ?? 0} folder /{" "}
+                    {preview.file_overrides?.length ?? 0} file identity override{"(s)"} pinned for
+                    future scans
                   </li>
                 )}
               </ul>
@@ -414,20 +427,11 @@ export default function SplitItemDialog({ item, open, onOpenChange }: SplitItemD
           )}
         </div>
 
-        <div className="border-border/50 flex shrink-0 gap-2 border-t pt-4">
-          <Button
-            variant="secondary"
-            className="flex-1"
-            onClick={() => submit(true)}
-            disabled={!canSubmit}
-            data-testid="preview-split"
-          >
-            {splitMutation.isPending && !preview ? "Previewing…" : "Preview"}
-          </Button>
+        <div className="border-border/50 flex shrink-0 border-t pt-4">
           <Button
             className="flex-1 gap-2"
-            onClick={() => submit(false)}
-            disabled={!canSubmit || !preview}
+            onClick={confirmSplit}
+            disabled={!planValid || !preview || splitMutation.isPending}
             data-testid="confirm-split"
           >
             <Scissors className="h-4 w-4" />
