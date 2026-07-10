@@ -1150,18 +1150,6 @@ export function VideoPlayer({
     }
   }, [cancelNextEpisodeAutoPlay, displayMode]);
 
-  // Pause the underlying video when the post-roll overlay takes over so HLS
-  // stops buffering the tail segment. Without this, on end-of-series the
-  // player can visibly loop the last few seconds of the file while waiting
-  // for an `ended` event that HLS may never deliver cleanly.
-  useEffect(() => {
-    if (displayMode !== "postroll") return;
-    const video = videoRef.current;
-    if (video && !video.paused) {
-      video.pause();
-    }
-  }, [displayMode]);
-
   // -- Intro skip --
   const showIntroSkip = intro != null && currentTime >= intro.start && currentTime < intro.end;
   const showRecapSkip = recap != null && currentTime >= recap.start && currentTime < recap.end;

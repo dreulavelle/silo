@@ -710,8 +710,8 @@ export function WatchPlaybackHost() {
         return;
       }
 
-      // If already in post-roll (triggered early), just mark video as ended
-      // so PlayingNextScreen can start its autoplay countdown.
+      // If post-roll was shown before the video ended, wait for the real
+      // `ended` event before starting the autoplay countdown.
       if (modeRef.current === "post-roll") {
         setPostRollVideoEnded(true);
         return;
@@ -775,12 +775,7 @@ export function WatchPlaybackHost() {
         snapshot.duration - snapshot.currentTime <= POST_ROLL_SECONDS_BEFORE_END
       ) {
         postRollEnteredRef.current = true;
-        // Entering post-roll early pauses the underlying video to stop HLS from
-        // buffering the tail segment (see VideoPlayer's post-roll pause effect).
-        // A paused video never fires `ended`, so we must arm the autoplay
-        // countdown here rather than waiting for an `ended` event that will
-        // never arrive — otherwise the overlay shows but the countdown stalls.
-        setPostRollVideoEnded(true);
+        setPostRollVideoEnded(false);
         controller.enterPostRoll(requestKeyValue);
       }
     },
