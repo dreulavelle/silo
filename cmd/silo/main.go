@@ -67,6 +67,11 @@ import (
 	"github.com/Silo-Server/silo-server/internal/markers"
 	"github.com/Silo-Server/silo-server/internal/mdblist"
 	"github.com/Silo-Server/silo-server/internal/metadata"
+
+	// Built-in metadata providers self-register into the metadata package's
+	// builtin registry on import; buildProviders resolves their seeded chain
+	// entries in-process (no gRPC).
+	_ "github.com/Silo-Server/silo-server/internal/metadata/nfo"
 	"github.com/Silo-Server/silo-server/internal/models"
 	"github.com/Silo-Server/silo-server/internal/nodeconfig"
 	"github.com/Silo-Server/silo-server/internal/nodepool"
@@ -999,6 +1004,11 @@ func main() {
 					}
 					out := make([]pluginhost.InstalledPluginRecord, 0, len(installations))
 					for _, installation := range installations {
+						// The reserved builtin row is not a plugin; keep it out
+						// of the host's installed-plugin listing.
+						if installation.IsBuiltin() {
+							continue
+						}
 						capabilities, err := installationStore.ListCapabilities(ctx, installation.ID)
 						if err != nil {
 							return nil, err
@@ -1148,6 +1158,17 @@ func main() {
 	var mangaEnricher *manga.Enricher
 	if needsWorkers && deps.DB != nil && deps.FileRepo != nil {
 		chainRepo := metadata.NewChainRepository(deps.DB)
+		// Make every existing library chain aware of the built-in providers
+		// before serving: materialize legacy content_level='' chains per level,
+		// then append registered builtins disabled (idempotent; also the repair
+		// path after a stale chain-editor save drops a builtin row). Runs before
+		// the metadata service exists, so no chain cache to invalidate here.
+		syncCtx, syncCancel := context.WithTimeout(appCtx, 30*time.Second)
+		syncErr := metadata.SyncBuiltinProviderChains(syncCtx, chainRepo)
+		syncCancel()
+		if syncErr != nil {
+			log.Fatalf("sync builtin provider chains: %v", syncErr)
+		}
 		skippedRootRepo = metadata.NewSkippedRootRepository(deps.DB)
 		itemRepo = catalog.NewItemRepository(deps.DB).WithActiveSearchProvider(activeCatalogSearchProvider)
 		episodeRepo = catalog.NewEpisodeRepository(deps.DB)
@@ -1272,6 +1293,11 @@ func main() {
 					People:              personRepo,
 				},
 			)
+			// Local file:// artwork (NFO sidecars): confine reads to the owning
+			// library's roots and sweep stale hashed local/ prefixes on re-cache.
+			// The processor host must mount the libraries, like the metadata worker.
+			metadataImageCacheProcessor.SetLibraryRootResolver(deps.FolderRepo)
+			metadataImageCacheProcessor.SetImagePrefixDeleter(deps.S3Public)
 			metadataService.SetAutoCacheImages(cfg.Metadata.CacheImages)
 			metadataImageCacheProcessor.SetEnabled(cfg.Metadata.CacheImages)
 			configWatcher.OnChange(func(_, updated *config.Config) {
@@ -2794,6 +2820,12 @@ func reloadPluginImageResolvers(
 		if installation == nil {
 			continue
 		}
+		// Builtin installations resolve in-process metadata providers only;
+		// registering them here would claim their capability id as a gRPC
+		// image-resolver scheme with no binary behind it.
+		if installation.IsBuiltin() {
+			continue
+		}
 		capabilities, err := store.ListCapabilities(ctx, installation.ID)
 		if err != nil {
 			return fmt.Errorf("list image resolver capabilities for installation %d: %w", installation.ID, err)
@@ -2978,6 +3010,11 @@ func reloadMarkerPluginProviders(
 	nextPriority := 1000
 	for _, installation := range installations {
 		if installation == nil {
+			continue
+		}
+		// Builtin installations expose no marker providers; defense in depth
+		// alongside the capability-type filter below.
+		if installation.IsBuiltin() {
 			continue
 		}
 		capabilities, err := store.ListCapabilities(ctx, installation.ID)
