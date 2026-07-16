@@ -1037,6 +1037,7 @@ func NewRouter(deps Dependencies) chi.Router {
 			deps.PluginImageResolver,
 			detailSvc,
 		)
+		adminImageHandler.EventsHub = deps.EventsHub
 	}
 
 	var adminIntroHandler *handlers.AdminIntroHandler

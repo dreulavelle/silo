@@ -1119,11 +1119,10 @@ func cacheEbookCoverBytes(ctx context.Context, store ebookCoverMetadataStore, ca
 			return nil
 		}
 	}
-	basePath, ext, thumbhash, err := cacher.CacheEbookCover(ctx, data, contentID)
+	posterPath, thumbhash, err := cacher.CacheEbookCover(ctx, data, contentID)
 	if err != nil {
 		return err
 	}
-	posterPath := strings.TrimRight(basePath, "/") + "/original" + ext
 	if _, err := store.SetLocalPoster(ctx, contentID, posterPath, thumbhash, localEbookPosterPrefix); err != nil {
 		return fmt.Errorf("set ebook local poster: %w", err)
 	}

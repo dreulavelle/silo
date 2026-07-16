@@ -1255,6 +1255,7 @@ func main() {
 		// admin image applies can succeed even if automatic metadata caching is off.
 		if deps.S3Public != nil {
 			imageCacher := imagecache.New(deps.S3Public)
+			imageCacher.SetArtworkRevisionTracker(catalog.NewArtworkRevisionTracker(deps.DB))
 			metadataService.SetImageCacher(imageCacher)
 			imageCacheJobs := metadata.NewImageCacheJobRepository(deps.DB)
 			metadataService.SetImageCacheJobEnqueuer(imageCacheJobs)
@@ -1882,6 +1883,11 @@ func main() {
 			taskMgr.Register(tasks.NewScanLibrariesTask(deps.FolderRepo, deps.LibraryScanQueue, deps.EventBus))
 		}
 		taskMgr.Register(tasks.NewCleanupOrphanedMediaItemsTask(catalog.NewOrphanedProvisionalCleaner(deps.DB)))
+		if deps.S3Public != nil {
+			taskMgr.Register(tasks.NewCleanupArtworkRevisionsTask(
+				metadata.NewArtworkRevisionGarbageCollector(deps.DB, deps.S3Public),
+			))
+		}
 		catalogSearchIndexer := catalog.NewCatalogSearchIndexer(deps.DB, settingsRepo)
 		taskMgr.Register(tasks.NewSyncCatalogSearchIndexTask(catalogSearchIndexer))
 		taskMgr.Register(tasks.NewRebuildCatalogSearchIndexTask(catalogSearchIndexer))

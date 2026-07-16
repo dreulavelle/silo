@@ -4338,6 +4338,8 @@ export interface ApplyItemImageResponse {
   content_id: string;
   stored_path: string;
   thumbhash: string;
+  image_url?: string;
+  revision?: string;
 }
 
 export interface UnmatchedLibraryItem {
