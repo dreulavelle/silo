@@ -1,8 +1,11 @@
 package playback
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -23,9 +26,10 @@ func TestResolveTranscodeInputPathSTRM(t *testing.T) {
 
 func TestResolveTranscodeInputPathRejectsInvalidSTRM(t *testing.T) {
 	for name, content := range map[string]string{
-		"empty":    " \n",
-		"multiple": "https://one.example/file\nhttps://two.example/file",
-		"local":    "file:///etc/passwd",
+		"empty":     " \n",
+		"multiple":  "https://one.example/file\nhttps://two.example/file",
+		"local":     "file:///etc/passwd",
+		"oversized": strings.Repeat("a", 64*1024+1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "movie.strm")
@@ -44,5 +48,21 @@ func TestResolveTranscodeInputPathLeavesMediaPathAlone(t *testing.T) {
 	got, err := resolveTranscodeInputPath(path)
 	if err != nil || got != path {
 		t.Fatalf("resolved input = %q, err = %v", got, err)
+	}
+}
+
+func TestServeDirectPlayRejectsInvalidSTRM(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "movie.strm")
+	if err := os.WriteFile(path, []byte("file:///etc/passwd\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	response := httptest.NewRecorder()
+	err := ServeDirectPlay(response, request, path)
+	if err == nil {
+		t.Fatal("expected invalid .strm to be rejected")
+	}
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
 }

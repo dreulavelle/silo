@@ -236,16 +236,19 @@ func resolveTranscodeInputPath(inputPath string) (string, error) {
 	if !strings.EqualFold(filepath.Ext(inputPath), ".strm") {
 		return inputPath, nil
 	}
-	info, err := os.Stat(inputPath)
-	if err != nil {
-		return "", fmt.Errorf("stat stream shortcut: %w", err)
-	}
-	if info.Size() > 64*1024 {
-		return "", fmt.Errorf("stream shortcut exceeds 64 KiB")
-	}
-	content, err := os.ReadFile(inputPath)
+	file, err := os.Open(inputPath)
 	if err != nil {
 		return "", fmt.Errorf("read stream shortcut: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	const maxStreamShortcutBytes = 64 * 1024
+	content, err := io.ReadAll(io.LimitReader(file, maxStreamShortcutBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read stream shortcut: %w", err)
+	}
+	if len(content) > maxStreamShortcutBytes {
+		return "", fmt.Errorf("stream shortcut exceeds 64 KiB")
 	}
 	streamURL := strings.TrimSpace(string(content))
 	if streamURL == "" {
