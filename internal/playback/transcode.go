@@ -155,6 +155,12 @@ const (
 
 // StartTranscode launches an ffmpeg process that produces HLS segments.
 func StartTranscode(ctx context.Context, opts TranscodeOpts) (*TranscodeSession, error) {
+	inputPath, err := resolveTranscodeInputPath(opts.InputPath)
+	if err != nil {
+		return nil, err
+	}
+	opts.InputPath = inputPath
+
 	if opts.VideoBitstreamFilter != "" &&
 		(opts.VideoBitstreamFilter != DV7ToHDR10BitstreamFilter || !strings.EqualFold(opts.TargetCodecVideo, "copy")) {
 		return nil, fmt.Errorf("unsupported video bitstream filter recipe")
@@ -179,7 +185,6 @@ func StartTranscode(ctx context.Context, opts TranscodeOpts) (*TranscodeSession,
 		stderr:               newBoundedTailBuffer(stderrTailMaxBytes),
 		lastRequestedSegment: opts.StartSegmentNumber,
 	}
-
 	args := buildFFmpegArgs(opts)
 	bin := opts.FFmpegPath
 	if bin == "" {
@@ -221,6 +226,39 @@ func StartTranscode(ctx context.Context, opts TranscodeOpts) (*TranscodeSession,
 	}()
 
 	return s, nil
+}
+
+// resolveTranscodeInputPath turns a Stremio-style .strm shortcut into the
+// remote media URL FFmpeg must open. Keeping this at the shared launch boundary
+// covers integrated playback, transcode nodes, Jellyfin compatibility, and
+// reconstructed sessions without duplicating resolution logic in each handler.
+func resolveTranscodeInputPath(inputPath string) (string, error) {
+	if !strings.EqualFold(filepath.Ext(inputPath), ".strm") {
+		return inputPath, nil
+	}
+	info, err := os.Stat(inputPath)
+	if err != nil {
+		return "", fmt.Errorf("stat stream shortcut: %w", err)
+	}
+	if info.Size() > 64*1024 {
+		return "", fmt.Errorf("stream shortcut exceeds 64 KiB")
+	}
+	content, err := os.ReadFile(inputPath)
+	if err != nil {
+		return "", fmt.Errorf("read stream shortcut: %w", err)
+	}
+	streamURL := strings.TrimSpace(string(content))
+	if streamURL == "" {
+		return "", fmt.Errorf("stream shortcut is empty")
+	}
+	if strings.ContainsAny(streamURL, "\r\n") {
+		return "", fmt.Errorf("stream shortcut must contain exactly one URL")
+	}
+	lowerURL := strings.ToLower(streamURL)
+	if !strings.HasPrefix(lowerURL, "https://") && !strings.HasPrefix(lowerURL, "http://") {
+		return "", fmt.Errorf("stream shortcut URL must use http or https")
+	}
+	return streamURL, nil
 }
 
 // IsMPEG2VideoCodec reports whether a probed video codec name identifies

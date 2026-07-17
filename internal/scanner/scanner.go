@@ -25,12 +25,13 @@ import (
 
 // videoExtensions is the set of file extensions recognized as media files.
 var videoExtensions = map[string]bool{
-	".mkv": true,
-	".mp4": true,
-	".avi": true,
-	".m4v": true,
-	".ts":  true,
-	".wmv": true,
+	".mkv":  true,
+	".mp4":  true,
+	".avi":  true,
+	".m4v":  true,
+	".ts":   true,
+	".wmv":  true,
+	".strm": true,
 }
 
 // SupportsVideoFile reports whether the given path uses a recognized media extension.
@@ -3266,6 +3267,31 @@ func (s *Scanner) gatherHints(filePath string) FileHints {
 
 // probeFile attempts to get probe data by running local ffprobe.
 func (s *Scanner) probeFile(ctx context.Context, filePath string) (*ProbeData, string) {
+	if strings.EqualFold(filepath.Ext(filePath), ".strm") {
+		lowerPath := strings.ToLower(filePath)
+		width, height, resolution := 1920, 1080, "1080p"
+		if strings.Contains(lowerPath, "2160p") || strings.Contains(lowerPath, "4k") {
+			width, height, resolution = 3840, 2160, "2160p"
+		}
+		return &ProbeData{
+			CodecVideo:    "h264",
+			CodecAudio:    "aac",
+			Resolution:    resolution,
+			AudioChannels: 2,
+			Container:     "strm",
+			Duration:      7200,
+			VideoTracks: []VideoTrackInfo{{
+				Codec:  "h264",
+				Width:  width,
+				Height: height,
+			}},
+			AudioTracks: []AudioTrackInfo{{
+				Codec:    "aac",
+				Channels: 2,
+			}},
+		}, "strm"
+	}
+
 	if s.ffprobePath != "" {
 		probe, err := ProbeFile(ctx, s.ffprobePath, filePath)
 		if err != nil {
