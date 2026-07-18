@@ -28,9 +28,19 @@ type RecipeCard struct {
 	// back-compat with cards written before direct/remux were reconstructable.
 	PlayMethod PlayMethod `json:"play_method,omitempty"`
 	// TranscodeAudio mirrors Session.TranscodeAudio; used by the remux path to
-	// re-spawn ffmpeg with the same audio handling on reconstruct.
+	// re-spawn ffmpeg with the same audio handling on reconstruct, and by the
+	// admin activity views to classify the reconstructed session (audio
+	// re-encode vs repackage).
 	TranscodeAudio bool        `json:"transcode_audio,omitempty"`
 	RemuxDVMode    RemuxDVMode `json:"remux_dv_mode,omitempty"`
+
+	// Client metadata mirrored from the session so admin views (client label,
+	// Jellyfin pill) survive reconstruction. Carried only by stored cards —
+	// deliberately NOT projected into stream-token claims, where a user agent
+	// would bloat every stream URL.
+	ClientName      string `json:"client_name,omitempty"`
+	ClientVersion   string `json:"client_version,omitempty"`
+	ClientUserAgent string `json:"client_user_agent,omitempty"`
 
 	// Encode parameters — mirror of the byte-affecting TranscodeOpts fields.
 	// Unused (zero) for direct/remux cards, which carry no segment-based encode.
@@ -69,6 +79,7 @@ func NewRecipeCard(userID int, profileID string, mediaFileID int, transcodeNodeU
 		TranscodeNodeURL:     transcodeNodeURL,
 		TranscodeTransportID: opts.TranscodeTransportID,
 		PlayMethod:           PlayTranscode,
+		TranscodeAudio:       TranscodesAudio(opts.TargetCodecAudio),
 		InputPath:            opts.InputPath,
 		OutputSubdir:         opts.OutputSubdir,
 		SourceVideoCodec:     opts.SourceVideoCodec,

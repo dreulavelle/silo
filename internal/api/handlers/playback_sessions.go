@@ -72,6 +72,32 @@ type playbackSessionRow struct {
 	RequestedVideoResolution string    `json:"requested_video_resolution,omitempty"`
 	VideoDecision            string    `json:"video_decision,omitempty"`
 	AudioDecision            string    `json:"audio_decision,omitempty"`
+	EffectivePlayMethod      string    `json:"effective_play_method,omitempty"`
+	IsJellyfinClient         bool      `json:"is_jellyfin_client,omitempty"`
+}
+
+// playbackSessionsCapabilitiesResponse advertises the additive fields of the
+// live admin session payload so independently deployed clients (Android,
+// Apple) can feature-detect them. Both fields are omitempty on the wire, so
+// absence on a row is otherwise indistinguishable from an older server.
+type playbackSessionsCapabilitiesResponse struct {
+	// EffectivePlayMethod reports that rows carry effective_play_method.
+	EffectivePlayMethod bool `json:"effective_play_method"`
+	// EffectivePlayMethodValues is the closed bucket vocabulary a supported
+	// server emits (absent field = unknown).
+	EffectivePlayMethodValues []string `json:"effective_play_method_values"`
+	// IsJellyfinClient reports that rows carry is_jellyfin_client.
+	IsJellyfinClient bool `json:"is_jellyfin_client"`
+}
+
+// HandleGetSessionsCapabilities exposes additive feature support for the live
+// admin session payload (GET /admin/sessions/capabilities).
+func (h *AdminHandler) HandleGetSessionsCapabilities(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, playbackSessionsCapabilitiesResponse{
+		EffectivePlayMethod:       true,
+		EffectivePlayMethodValues: []string{"direct", "remux", "transcode", "audio"},
+		IsJellyfinClient:          true,
+	})
 }
 
 // PlaybackSessionsQuery scopes live session listing.
@@ -248,6 +274,8 @@ func enrichPlaybackSessionRow(row *playbackSessionRow, audioTracksJSON []byte) {
 	}
 
 	row.VideoDecision, row.AudioDecision = sessionComponentDecision(row.PlayMethod, row.TranscodeAudio, row.TargetVideoCodec)
+	row.EffectivePlayMethod = effectivePlayMethod(row.VideoDecision, row.AudioDecision)
+	row.IsJellyfinClient = isJellyfinEcosystemClient(row.ClientName, row.ClientUserAgent)
 
 	var audioTracks []models.AudioTrack
 	if len(audioTracksJSON) > 0 {
@@ -333,6 +361,79 @@ func sessionComponentDecision(playMethod string, transcodeAudio bool, targetVide
 	default:
 		return "", ""
 	}
+}
+
+// effectivePlayMethod reduces the per-stream decisions to the single bucket
+// the admin activity views aggregate on. Raw play_method is misleading there:
+// an HLS repackage reports play_method "transcode" with a copied video stream,
+// and an audio-only re-encode reports "remux" — the decisions carry what
+// actually costs CPU.
+//   - video re-encoded        -> "transcode"
+//   - only audio re-encoded   -> "audio"
+//   - streams only repackaged -> "remux"
+//   - nothing touched         -> "direct"
+//
+// Returns "" when the decisions are unknown (empty or unrecognized
+// play_method, e.g. a stale row from an older node), so consumers can
+// distinguish "unknown" from a definite bucket instead of inventing one.
+func effectivePlayMethod(videoDecision, audioDecision string) string {
+	switch {
+	case videoDecision == "" && audioDecision == "":
+		return ""
+	case videoDecision == "transcode":
+		return "transcode"
+	case audioDecision == "transcode":
+		return "audio"
+	case videoDecision == "direct" && audioDecision == "direct":
+		return "direct"
+	default:
+		return "remux"
+	}
+}
+
+// jellyfinClientTokens identifies Jellyfin-ecosystem clients — sessions served
+// through the Jellyfin compatibility surface — by client name (parsed from the
+// MediaBrowser auth header) or user agent. This is the single source of truth
+// behind is_jellyfin_client, which the admin UIs surface as the "JF" pill;
+// keep it in step with the display-labeling rules in
+// playbackClientDisplayName so a client that gets a label also gets the flag.
+// Kodi and mpv reach Silo only through the Jellyfin compat surface today
+// (jellyfin-kodi/JellyCon, jellyfin-mpv-shim). Generic browser tokens are
+// deliberately excluded: the native web player shares those user agents.
+var jellyfinClientTokens = []string{
+	"jellyfin",
+	"findroid",
+	"streamyfin",
+	"swiftfin",
+	"jellycon",
+	"wholphin",
+	"fladder",
+	"vidhub",
+	"senplayer",
+	"infuse",
+	"delfin",
+	"finamp",
+	"kodi",
+	"mpv",
+}
+
+// isJellyfinEcosystemClient reports whether the session's client metadata
+// matches a known Jellyfin-ecosystem client. This is a heuristic: an
+// unrecognized fork simply gets no JF pill (cosmetic). Stamping a compat-origin
+// flag on the session at creation would be exact and is the eventual fix.
+func isJellyfinEcosystemClient(clientName, userAgent string) bool {
+	for _, value := range []string{clientName, userAgent} {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		for _, token := range jellyfinClientTokens {
+			if strings.Contains(value, token) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func firstNonEmptyValue(values ...string) string {
