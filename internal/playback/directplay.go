@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Silo-Server/silo-server/internal/httpstream"
+	"github.com/Silo-Server/silo-server/internal/strm"
 )
 
 // MimeFromExtension returns a MIME type based on the file extension.
@@ -52,6 +53,14 @@ func MimeFromExtension(name string) string {
 // Range requests, conditional requests (If-Modified-Since, If-None-Match),
 // and Content-Type detection.
 func ServeDirectPlay(w http.ResponseWriter, r *http.Request, filePath string) error {
+	// A .strm placeholder has no local bytes to serve. Resolve its target
+	// and redirect instead, so media never transits this server. Guarding here
+	// rather than at the call sites covers every caller with one edit — see
+	// FORK.md on keeping the rebase surface small.
+	if strm.IsPlaceholderPath(filePath) {
+		return strm.ServePlaceholder(w, r, filePath)
+	}
+
 	// Media bodies routinely take longer than the server's absolute
 	// WriteTimeout; roll the write deadline with progress instead.
 	w = httpstream.NewRollingDeadlineWriter(w)

@@ -26,6 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # internal/imageutil binds libvips via cgo (h2non/bimg), so the Go build
+      # cannot even resolve packages without it. Mirrors the Dockerfile.
+      - name: Install libvips
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips-dev
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

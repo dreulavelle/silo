@@ -21,6 +21,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/naming"
 	"github.com/Silo-Server/silo-server/internal/rootcheck"
 	"github.com/Silo-Server/silo-server/internal/s3client"
+	"github.com/Silo-Server/silo-server/internal/strm"
 )
 
 // videoExtensions is the set of file extensions recognized as media files.
@@ -31,6 +32,10 @@ var videoExtensions = map[string]bool{
 	".m4v": true,
 	".ts":  true,
 	".wmv": true,
+	// Placeholder files for on-demand playback. They hold a URL, not
+	// media bytes: never probed at scan time, resolved at play time. See
+	// internal/strm and FORK.md.
+	".strm": true,
 }
 
 // SupportsVideoFile reports whether the given path uses a recognized media extension.
@@ -2721,6 +2726,14 @@ func needsCriticalProbeRepairScanState(file *scanStateFile) bool {
 	if file == nil {
 		return true
 	}
+	// Placeholders are permanently "incomplete" by every test below:
+	// no probe source, zero duration, empty codecs. Without this exemption a
+	// library of placeholders would queue itself for repair on every single
+	// scan, forever — a self-inflicted denial of service against the resolver.
+	// Their metadata is populated out of band, not by the repair path.
+	if strm.IsPlaceholderPath(file.FilePath) {
+		return false
+	}
 	if strings.TrimSpace(file.ProbeSource) == "" || file.ProbeUpdatedAt == nil {
 		return true
 	}
@@ -3266,6 +3279,14 @@ func (s *Scanner) gatherHints(filePath string) FileHints {
 
 // probeFile attempts to get probe data by running local ffprobe.
 func (s *Scanner) probeFile(ctx context.Context, filePath string) (*ProbeData, string) {
+	// Placeholders have no local bytes. Probing one would either fail
+	// outright or — worse — reach out to the resolver from inside a library
+	// scan, turning a full scan into a resolution storm against the upstream
+	// provider. Metadata for these rows is populated out of band.
+	if strm.IsPlaceholderPath(filePath) {
+		return nil, strm.ProbeSourcePlaceholder
+	}
+
 	if s.ffprobePath != "" {
 		probe, err := ProbeFile(ctx, s.ffprobePath, filePath)
 		if err != nil {

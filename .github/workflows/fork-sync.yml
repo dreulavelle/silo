@@ -45,6 +45,10 @@ jobs:
           git config user.name "fork-sync[bot]"
           git config user.email "fork-sync@users.noreply.github.com"
 
+      # Required by internal/imageutil (cgo → libvips). Mirrors the Dockerfile.
+      - name: Install libvips
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips-dev
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
