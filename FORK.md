@@ -75,8 +75,8 @@ upstream migration would silently reorder our schema changes relative to theirs
 — and any fork migration that altered a table an interleaved upstream migration
 also altered would break in ways that only show up on a fresh database.
 
-**Fork migrations never `ALTER` an upstream table.** They create fork-owned
-tables keyed by the upstream primary key instead:
+**Fork migrations never `ALTER` an upstream table.** If one is ever needed, it
+creates a fork-owned table keyed by the upstream primary key instead:
 
 ```sql
 CREATE TABLE strm_sources (
@@ -88,6 +88,20 @@ CREATE TABLE strm_sources (
 
 A foreign key is a far weaker coupling than a column. Upstream can add, rename,
 and reorder `media_files` columns all day without touching us.
+
+### There are currently no fork migrations, and that is the goal
+
+On-demand playback needs no schema change in Silo. Everything the server has to
+know is derivable from the file path — `.strm` means placeholder — so the
+scanner and playback branch on `strm.IsPlaceholderPath` and nothing else. All
+resolution state (pins, cached targets, request history, failure counts) lives
+in the resolver plugin's own schema, which upstream never sees and never
+migrates.
+
+Keeping it that way is worth real effort. Zero fork migrations means zero
+migration ordering conflicts, forever, which removes the single nastiest class
+of long-lived-fork breakage: a schema divergence that only manifests on a fresh
+database, long after the rebase that caused it.
 
 ## Upstream workflows
 
