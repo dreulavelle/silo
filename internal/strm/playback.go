@@ -34,6 +34,15 @@ func ServePlaceholder(w http.ResponseWriter, r *http.Request, filePath string) e
 		return writePlaceholderError(w, r, filePath, err)
 	}
 
+	// A placeholder written by a resolver plugin points at that plugin's route
+	// on this host, which no client can reach. Make that hop here and redirect
+	// the client to whatever the resolver answers with. External targets pass
+	// through untouched.
+	target, err = ResolveTarget(r.Context(), target)
+	if err != nil {
+		return writePlaceholderError(w, r, filePath, err)
+	}
+
 	slog.DebugContext(r.Context(), "strm: redirecting to resolved target",
 		"component", "strm", "path", filePath, "status", RedirectStatus)
 
