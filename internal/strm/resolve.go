@@ -30,6 +30,9 @@ const internalResolveTimeout = 30 * time.Second
 // when it also addresses a plugin route.
 const pluginRoutePrefix = "/api/v1/plugins/"
 
+// userAgent identifies host-local resolver hops.
+const userAgent = "silo-strm/1.0"
+
 // internalClient performs host-local hops. Redirects are explicitly NOT
 // followed: we need the Location header, not the body behind it, because the
 // whole point is to hand that location to the client rather than proxy it.
@@ -104,6 +107,13 @@ func followInternalHop(ctx context.Context, target string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("strm: build resolver request: %w", err)
 	}
+
+	// Go's default User-Agent ("Go-http-client/...") is blocked outright by some
+	// bot-protection layers in this ecosystem — Cloudflare in front of at least
+	// one widely-used stream provider answers it with a 403 HTML page while
+	// accepting any ordinary agent. Host-local plugin routes do not care, but
+	// this hop is cheap insurance and makes traffic identifiable in logs.
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := internalClient.Do(req)
 	if err != nil {
