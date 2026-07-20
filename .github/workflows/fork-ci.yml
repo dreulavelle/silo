@@ -1,0 +1,112 @@
+# Fork CI: build and test our patch series.
+#
+# Deliberately separate from any upstream workflow file. We never edit upstream
+# CI — editing it would make every upstream CI change a rebase conflict, and
+# upstream CI changes constantly. New file, zero conflict surface.
+name: fork-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: fork-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go build + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # web/embed.go does `//go:embed all:dist`, so the Go build cannot even
+      # load packages without it. Building the real frontend takes minutes and
+      # proves nothing about Go changes; the frontend job below covers it.
+      - name: Stub embedded frontend
+        run: |
+          mkdir -p web/dist
+          printf '<!doctype html><title>fork-ci stub</title>\n' > web/dist/index.html
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Vet
+        run: go vet ./...
+
+  fork-invariants:
+    name: fork invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/Silo-Server/silo-server || true
+          git fetch --quiet upstream main
+
+      # The fork's core discipline, enforced mechanically: every upstream file
+      # we modify must be declared in fork/touched-files.txt. If this fails,
+      # either move the change into a fork-owned path or consciously accept the
+      # new rebase liability by declaring it.
+      - name: Verify touched-files manifest is complete
+        run: |
+          set -euo pipefail
+          source fork/upstream.pin
+
+          declared="$(grep -vE '^\s*(#|$)' fork/touched-files.txt | sort -u)"
+          actual="$(git diff --name-only "$UPSTREAM_COMMIT..HEAD" \
+            | grep -vE '^(fork/|scripts/fork-|\.github/workflows/fork-|FORK\.md$|internal/strm/|migrations/sql/9)' \
+            | sort -u)"
+
+          undeclared="$(comm -13 <(printf '%s\n' "$declared") <(printf '%s\n' "$actual") || true)"
+
+          if [ -n "$undeclared" ]; then
+            echo "::error::Undeclared upstream file modifications (rebase liabilities):"
+            printf '%s\n' "$undeclared" | sed 's/^/  /'
+            echo
+            echo "Either move the change into a fork-owned path (internal/strm/, fork/,"
+            echo "migrations/sql/9*.sql) or add it to fork/touched-files.txt."
+            exit 1
+          fi
+
+          echo "All upstream modifications are declared."
+          printf '%s\n' "$declared" | sed 's/^/  /'
+
+      # Fork migrations must sort after every conceivable upstream migration so
+      # that rebases never interleave our schema changes into the middle of
+      # theirs. See FORK.md.
+      - name: Verify fork migrations sort last
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fork_migrations=(migrations/sql/9*.sql)
+          if [ ${#fork_migrations[@]} -eq 0 ]; then
+            echo "No fork migrations yet."
+            exit 0
+          fi
+          for m in "${fork_migrations[@]}"; do
+            base="$(basename "$m")"
+            if [[ ! "$base" =~ ^9[0-9]{13}_ ]]; then
+              echo "::error::Fork migration '$base' must use a 9xxxxxxxxxxxxx_ prefix."
+              exit 1
+            fi
+            echo "  ok: $base"
+          done

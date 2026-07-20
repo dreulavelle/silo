@@ -1,0 +1,19 @@
+# Upstream files this fork modifies.
+#
+# Every entry here is a rebase liability. The whole strategy of this fork is to
+# keep this list SHORT and to keep each edit SMALL and STRUCTURALLY STABLE
+# (top-of-function guards, map literal entries, single call sites) so that
+# upstream churn inside those files rarely collides with us.
+#
+# scripts/fork-sync.sh cross-references this list against the files upstream has
+# touched since fork/upstream.pin and warns before a rebase is attempted.
+#
+# Anything NOT in this list must live in a new file under a fork-owned path:
+#   internal/strm/...          fork-owned Go package
+#   migrations/sql/9*.sql      fork-owned migrations (sort last, see FORK.md)
+#   fork/, scripts/fork-*      fork tooling
+#
+# Format: one repo-relative path per line. '#' comments and blanks ignored.
+
+internal/scanner/scanner.go
+internal/playback/directplay.go

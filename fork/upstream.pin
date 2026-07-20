@@ -1,0 +1,9 @@
+# Upstream commit this fork is currently rebased onto.
+# Bump ONLY via scripts/fork-sync.sh rebase, never by hand.
+# Format: KEY=VALUE, no spaces around '='.
+
+UPSTREAM_REMOTE=upstream
+UPSTREAM_REF=main
+UPSTREAM_COMMIT=c90e7360541d0cd044df2bad643282b215d23d66
+UPSTREAM_DATE=2026-07-20T14:56:46-04:00
+PINNED_AT=2026-07-20
