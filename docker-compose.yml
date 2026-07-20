@@ -52,7 +52,7 @@ services:
       - ${SILO_DATA_ROOT:-/opt/silo}/meilisearch:/meili_data
 
   silo:
-    image: ${SILO_IMAGE:-ghcr.io/silo-server/silo-server:latest}
+    image: ${SILO_IMAGE:-ghcr.io/dreulavelle/silo:latest}
     restart: unless-stopped
     environment:
       MODE: integrated
@@ -92,7 +92,7 @@ services:
   # Optional distributed-mode example. Most single-host installs should
   # just use the integrated service above.
   # silo-proxy:
-  #   image: ${SILO_IMAGE:-ghcr.io/silo-server/silo-server:latest}
+  #   image: ${SILO_IMAGE:-ghcr.io/dreulavelle/silo:latest}
   #   restart: unless-stopped
   #   profiles: [proxy]
   #   environment:
@@ -118,7 +118,7 @@ services:
   # Optional distributed-mode example. Most single-host installs should
   # just use the integrated service above.
   # silo-transcode:
-  #   image: ${SILO_IMAGE:-ghcr.io/silo-server/silo-server:latest}
+  #   image: ${SILO_IMAGE:-ghcr.io/dreulavelle/silo:latest}
   #   restart: unless-stopped
   #   profiles: [transcode]
   #   environment:

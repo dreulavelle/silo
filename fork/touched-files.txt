@@ -17,3 +17,10 @@
 
 internal/scanner/scanner.go
 internal/playback/directplay.go
+
+# Default image points at this fork's published image rather than upstream's.
+# Both are one-line value swaps on an already-parameterized setting
+# (${SILO_IMAGE:-...}), so they rebase cleanly unless upstream restructures the
+# compose entirely.
+docker-compose.yml
+.env.example
