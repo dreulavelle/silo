@@ -47,8 +47,19 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Tests already broken on the pinned upstream commit are skipped so that a
+      # red build unambiguously means "the fork broke something". Each entry is
+      # verified against a clean upstream checkout — see the file for the rules.
       - name: Test
-        run: go test ./... -count=1
+        run: |
+          set -euo pipefail
+          skip="$(grep -vE '^\s*(#|$)' fork/known-upstream-failures.txt | paste -sd'|' -)"
+          if [ -n "$skip" ]; then
+            echo "Skipping known-upstream failures: $skip"
+            go test ./... -count=1 -skip "^(${skip})$"
+          else
+            go test ./... -count=1
+          fi
 
       - name: Vet
         run: go vet ./...

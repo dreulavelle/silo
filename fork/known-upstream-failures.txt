@@ -1,0 +1,31 @@
+# Tests that already fail on the pinned upstream commit, before any fork change.
+#
+# A fork whose CI is red on day one teaches everyone to ignore CI, which defeats
+# the point of having it. These are skipped so that a red build means "the fork
+# broke something" rather than "upstream is red again".
+#
+# RULES
+#
+# 1. Every entry must be VERIFIED to fail on a clean upstream checkout at the
+#    commit in fork/upstream.pin, not merely assumed to be upstream's fault.
+#    Verify with a detached worktree:
+#
+#      git worktree add --detach /tmp/silo-clean upstream/main
+#      cd /tmp/silo-clean && go test ./<pkg>/ -run '<TestName>' -count=3
+#
+# 2. Re-verify when fork/upstream.pin advances. If upstream has fixed a test,
+#    DELETE the entry — leaving it means we permanently stop testing something
+#    that works again.
+#
+# 3. Never add a test here to make your own change go green. If a test starts
+#    failing after a fork change, the fork change is wrong until proven
+#    otherwise.
+#
+# Format: one Go test name per line (matched as a -skip regex alternative).
+# '#' comments and blanks ignored.
+
+# Fails 3/3 on clean upstream c90e7360. The seek-failure recovery path returns
+# outcome "adaptation_unavailable" with a nil plan instead of recovering on the
+# pinned media version. Unrelated to .strm: this test never touches placeholder
+# paths, and the failure reproduces with zero fork commits applied.
+TestHandleReplanPlaybackV3SeekFailureRecoveryNeverChangesMediaVersion

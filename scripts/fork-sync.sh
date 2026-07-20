@@ -140,7 +140,20 @@ if (( REBASE_OK )); then
   else
     ok "go build passes"
     info "running go test (this takes a while)"
-    if ! (cd "$TRIAL_DIR" && go test ./... >/tmp/fork-sync-test.log 2>&1); then
+
+    # Skip tests already broken upstream, same list CI uses, so a failure here
+    # means the rebase broke something rather than upstream being red again.
+    SKIP_RE=""
+    if [[ -f fork/known-upstream-failures.txt ]]; then
+      SKIP_RE="$(grep -vE '^\s*(#|$)' fork/known-upstream-failures.txt | paste -sd'|' -)"
+    fi
+    TEST_ARGS=()
+    if [[ -n "$SKIP_RE" ]]; then
+      TEST_ARGS=(-skip "^(${SKIP_RE})$")
+      info "skipping known-upstream failures: $SKIP_RE"
+    fi
+
+    if ! (cd "$TRIAL_DIR" && go test ./... "${TEST_ARGS[@]}" >/tmp/fork-sync-test.log 2>&1); then
       warn "go test FAILED after rebase; failing packages:"
       grep -E '^(FAIL|--- FAIL)' /tmp/fork-sync-test.log | head -30 | sed 's/^/    /' || true
       warn "full log: /tmp/fork-sync-test.log"
