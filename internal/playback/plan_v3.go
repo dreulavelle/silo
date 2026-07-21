@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Silo-Server/silo-server/internal/models"
+	"github.com/Silo-Server/silo-server/internal/strm"
 )
 
 type PlannerSettingsV3 struct {
@@ -157,6 +158,31 @@ func PlanPlaybackV3(input PlannerInputV3) PlannerResultV3 {
 		})
 	}
 	if !detailedVideoEvidenceCompleteV3(source) {
+		// A placeholder normally has real metadata by now: the playback probe
+		// path resolves it and probes the stream behind it before planning. But
+		// that depends on a provider being reachable, and refusing to play
+		// because a scrape failed is a worse answer than playing conservatively
+		// — the user pressed play, and a transcode at an assumed quality will
+		// work even when nothing is known about the source.
+		//
+		// This is a fallback, not the plan. When the probe did its job the
+		// planner never reaches here, and playback gets a real duration, real
+		// codecs, and the chance to remux instead of re-encode.
+		if isPlaceholderSourceV3(file) {
+			height := source.Height
+			if height <= 0 {
+				height = 1080
+			}
+			width, bitrate := qualityDimensionsV3(height, source.Width, source.Height)
+			return planVideoTranscodeV3(input, base, source, QualityResultV3{
+				Label:             resolutionLabelV3(height),
+				Width:             width,
+				Height:            height,
+				BitrateKbps:       bitrate,
+				RequiresTranscode: true,
+				Reason:            "placeholder_metadata_unavailable",
+			}, hlsSubtitle, "placeholder_metadata_unavailable")
+		}
 		return terminalPlannerResultV3("source_metadata_incomplete", "The source is missing video metadata required for a validated playback route.", true)
 	}
 
@@ -375,6 +401,15 @@ func PlanPlaybackV3(input PlannerInputV3) PlannerResultV3 {
 	}
 
 	return terminalPlannerResultV3("adaptation_unavailable", "No validated playback route is available for this source and output route.", false)
+}
+
+// isPlaceholderSourceV3 reports whether a file is a .strm placeholder, whose
+// metadata is resolved on demand rather than discovered at scan time.
+func isPlaceholderSourceV3(file *models.MediaFile) bool {
+	if file == nil {
+		return false
+	}
+	return strm.IsPlaceholderPath(file.FilePath) || strings.EqualFold(file.Container, "strm")
 }
 
 // planVideoTranscodeV3 always executes on the HLS engine, so the caller must
