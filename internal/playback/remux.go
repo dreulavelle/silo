@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/Silo-Server/silo-server/internal/httpstream"
+	"github.com/Silo-Server/silo-server/internal/strm"
 )
 
 var (
@@ -320,9 +321,10 @@ func ServeRemuxWithDVMode(w http.ResponseWriter, r *http.Request, filePath, outp
 	// Remux output streams for the length of the title; roll the write
 	// deadline with progress instead of the server's absolute WriteTimeout.
 	w = httpstream.NewRollingDeadlineWriter(w)
-	// Check file exists before starting ffmpeg to return a proper 404.
-	// Headers must be written before streaming begins, so we can't detect
-	// ffmpeg errors after WriteHeader(200) has been sent.
+
+	// Check the placeholder itself exists before resolving it: a missing .strm
+	// is a 404, while a resolver that cannot answer is an upstream failure, and
+	// the two deserve different statuses.
 	if _, err := os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found", http.StatusNotFound)
@@ -331,6 +333,16 @@ func ServeRemuxWithDVMode(w http.ResponseWriter, r *http.Request, filePath, outp
 		http.Error(w, "failed to access file", http.StatusInternalServerError)
 		return err
 	}
+
+	// A placeholder holds a URL, not media, so ffmpeg gets the stream behind it.
+	// Resolved here rather than in the caller because every path into remuxing
+	// needs it, and one that forgets fails with an opaque decode error.
+	resolvedPath, resolveErr := strm.ResolveFileForInput(r.Context(), filePath)
+	if resolveErr != nil {
+		http.Error(w, "failed to resolve stream", http.StatusBadGateway)
+		return resolveErr
+	}
+	filePath = resolvedPath
 
 	session, err := StartRemuxWithDVMode(r.Context(), filePath, outputFormat, seekSeconds, transcodeAudio, audioTrackIndex, dvProfile, mode, ffmpegPath)
 	if err != nil {

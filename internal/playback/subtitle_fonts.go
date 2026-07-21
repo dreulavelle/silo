@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Silo-Server/silo-server/internal/strm"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,13 @@ type attachmentProbeStream struct {
 // loading them into JASSUB is the closest browser equivalent to libass on a
 // native player.
 func ExtractAttachedSubtitleFonts(ctx context.Context, inputPath string, ffmpegPath string) ([]SubtitleFontAttachment, error) {
+	// Fonts live in the media container, which for a placeholder is remote.
+	resolved, err := strm.ResolveFileForInput(ctx, inputPath)
+	if err != nil {
+		return nil, err
+	}
+	inputPath = resolved
+
 	if strings.TrimSpace(inputPath) == "" {
 		return nil, fmt.Errorf("subtitle fonts: input path is required")
 	}

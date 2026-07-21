@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Silo-Server/silo-server/internal/strm"
 	"io"
 	"log/slog"
 	"net/http"
@@ -84,6 +85,16 @@ func StreamExtractSubtitle(ctx context.Context, opts StreamExtractOpts) error {
 	}
 	if opts.InputPath == "" {
 		return errors.New("StreamExtractSubtitle: InputPath is required")
+	}
+	// Embedded subtitles live in the container, which for a placeholder is
+	// remote. A cached extracted .sup is already a real local file, so it is
+	// left alone.
+	if !opts.InputIsExtractedSup {
+		resolved, err := strm.ResolveFileForInput(ctx, opts.InputPath)
+		if err != nil {
+			return err
+		}
+		opts.InputPath = resolved
 	}
 
 	bin := opts.FFmpegPath

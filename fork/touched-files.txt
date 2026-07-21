@@ -34,6 +34,19 @@ internal/scanner/probe_repair.go
 # transcode instead of refusing to play.
 internal/playback/plan_v3.go
 
+# Every function that hands a path to ffmpeg resolves a placeholder first.
+# Doing it at these boundaries rather than at each caller means a future caller
+# inherits the behaviour instead of failing with an opaque decode error.
+#
+#   remux.go            the path playback uses for a direct-playable source
+#   copy_seek_anchor.go finds the keyframe to seek to; needs to probe the media
+#   subtitle_stream.go  embedded subtitles live in the remote container
+#   subtitle_fonts.go   so do attached fonts
+internal/playback/remux.go
+internal/playback/copy_seek_anchor.go
+internal/playback/subtitle_stream.go
+internal/playback/subtitle_fonts.go
+
 # One block starting the fork-owned scanpush consumer.
 cmd/silo/main.go
 

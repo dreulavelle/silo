@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Silo-Server/silo-server/internal/strm"
 	"math"
 	"os/exec"
 	"strconv"
@@ -62,6 +63,14 @@ func ResolveCopySeekAnchor(
 	if strings.TrimSpace(inputPath) == "" {
 		return 0, 0, fmt.Errorf("resolve copy seek anchor: empty input path")
 	}
+	// A placeholder holds a URL, not media. Probing the file itself fails, and
+	// the failure surfaces as "Failed to resolve remux seek position" the first
+	// time a viewer drags the scrub bar.
+	resolvedInput, err := strm.ResolveFileForInput(ctx, inputPath)
+	if err != nil {
+		return 0, 0, fmt.Errorf("resolve copy seek anchor: %w", err)
+	}
+	inputPath = resolvedInput
 	if segmentDuration <= 0 {
 		segmentDuration = DefaultSegmentDuration
 	}
