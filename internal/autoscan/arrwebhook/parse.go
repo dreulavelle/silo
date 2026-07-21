@@ -89,6 +89,13 @@ var deleteEventTypes = map[string]bool{
 // series/movie shape. Inference failure is an error only for non-test events
 // that would otherwise produce work.
 func Parse(provider string, body []byte) (ParsedWebhook, error) {
+	// A native sender states its own paths, so it skips arr shape inference
+	// entirely. Gated on an explicit provider: inferring it would mean guessing
+	// again, which is the thing the native shape exists to avoid.
+	if strings.EqualFold(strings.TrimSpace(provider), ProviderNative) {
+		return parseNative(body)
+	}
+
 	var p payload
 	if err := json.Unmarshal(body, &p); err != nil {
 		return ParsedWebhook{}, ErrMalformedPayload
