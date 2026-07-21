@@ -149,3 +149,24 @@ func TestLoggableInputPrefersThePlaceholderPath(t *testing.T) {
 		t.Errorf("logged a credential: %s", got)
 	}
 }
+
+// ffmpeg names its input in its own error text, so a failure against a resolved
+// placeholder puts a bearer credential into an error string that callers log at
+// ERROR level. Redacting the command line and the stderr writer was not enough:
+// this path wraps stderr into an error and bypassed both.
+func TestTruncateStderrRedactsCredentials(t *testing.T) {
+	const token = "ERFOCQJSWA25QVEMNGAK5QD4F37SMV6IXD7RWLHM74SV3CNAILCH"
+	raw := "https://orionoid.com/stream/" + token + ": Invalid data found when processing input"
+
+	got := truncateStderr(raw)
+	if strings.Contains(got, token) {
+		t.Fatalf("credential survived into an error message: %s", got)
+	}
+	// The diagnosis has to survive, or the redaction costs more than it saves.
+	if !strings.Contains(got, "Invalid data found") {
+		t.Errorf("the actual error was lost: %s", got)
+	}
+	if !strings.Contains(got, "orionoid.com") {
+		t.Errorf("the provider was lost: %s", got)
+	}
+}

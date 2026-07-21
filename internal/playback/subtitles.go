@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Silo-Server/silo-server/internal/strm"
 	"net/http"
 	"os"
 	"os/exec"
@@ -309,8 +310,21 @@ func isSRTTimeLine(line string) bool {
 }
 
 // truncateStderr limits stderr output to a reasonable length for error messages.
+// truncateStderr bounds ffmpeg's stderr for inclusion in an error message, and
+// redacts any URL in it first.
+//
+// ffmpeg names its input in its own error text, so a failure against a resolved
+// placeholder puts a debrid token — a bearer credential — into an error string
+// that callers log, usually at ERROR level. Redacting at the command line and
+// at the stderr writer was not enough: this path wraps stderr into an error
+// instead, and bypassed both.
+//
+// Doing it here rather than at each call site is deliberate. Every ffmpeg
+// failure in this package funnels through here, so a new one inherits the
+// redaction rather than having to remember it.
 func truncateStderr(s string) string {
 	const maxLen = 500
+	s = strm.RedactLine(s)
 	if len(s) > maxLen {
 		return s[:maxLen] + "..."
 	}
