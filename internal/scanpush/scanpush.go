@@ -66,10 +66,16 @@ type sourceLister interface {
 	ListSources(ctx context.Context) ([]autoscan.Source, error)
 }
 
-// ingester accepts changes into autoscan's existing pipeline, which owns
-// dedupe, suppression, path rewriting and scan enqueueing.
+// ingester accepts changes into autoscan's existing pipeline, which owns path
+// rewriting, folder resolution, suppression and scan enqueueing.
+//
+// Deliberately IngestPush rather than IngestChanges: the latter is the webhook
+// path, which requires the source to be in webhook mode and persists a retrying
+// delivery record. A push is neither — it comes from a plugin already connected
+// to this host about files it just wrote, and if it fails the next poll finds
+// them anyway.
 type ingester interface {
-	IngestChanges(ctx context.Context, in autoscan.ChangeIngest) (autoscan.IngestResult, error)
+	IngestPush(ctx context.Context, in autoscan.ChangeIngest) (autoscan.IngestResult, error)
 }
 
 // Consumer routes plugin-published change events into autoscan.
@@ -189,7 +195,7 @@ func (c *Consumer) ingestInto(ctx context.Context, src autoscan.Source, pluginID
 	ingestCtx, cancel := context.WithTimeout(ctx, ingestTimeout)
 	defer cancel()
 
-	result, err := c.ingest.IngestChanges(ingestCtx, autoscan.ChangeIngest{
+	result, err := c.ingest.IngestPush(ingestCtx, autoscan.ChangeIngest{
 		SourceID:          src.ID,
 		ProviderEventType: EventSuffix,
 		Changes:           changes,

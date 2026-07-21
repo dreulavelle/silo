@@ -37,6 +37,11 @@ internal/playback/plan_v3.go
 # One block starting the fork-owned scanpush consumer.
 cmd/silo/main.go
 
+# New file in an upstream package: IngestPush, the plugin-push sibling of the
+# webhook IngestChanges. It must live in package autoscan because the work it
+# shares (consumeSourceChanges) is unexported.
+internal/autoscan/push.go
+
 # New test files in upstream packages. These carry less rebase risk than a
 # modified file — nothing to conflict with unless upstream adds a file of the
 # same name — but they cannot live under a fork-owned path, because they test

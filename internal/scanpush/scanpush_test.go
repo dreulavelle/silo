@@ -24,7 +24,7 @@ type stubIngest struct {
 	call []autoscan.ChangeIngest
 }
 
-func (s *stubIngest) IngestChanges(_ context.Context, in autoscan.ChangeIngest) (autoscan.IngestResult, error) {
+func (s *stubIngest) IngestPush(_ context.Context, in autoscan.ChangeIngest) (autoscan.IngestResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.call = append(s.call, in)
