@@ -214,6 +214,12 @@ func StartTranscode(ctx context.Context, opts TranscodeOpts) (*TranscodeSession,
 	s.logFFmpegEvent(ctx, "ffmpeg process starting", "")
 
 	cmd := exec.CommandContext(ctx, bin, args...)
+	// SIGTERM, not the default SIGKILL, so ffmpeg closes its remote HTTP
+	// connections before it dies. A killed process leaves the provider holding a
+	// half-open connection that counts against a per-stream connection limit; a
+	// terminated one hangs up cleanly. WaitDelay below escalates to SIGKILL if
+	// ffmpeg does not exit within the grace window.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -235,16 +241,39 @@ func StartTranscode(ctx context.Context, opts TranscodeOpts) (*TranscodeSession,
 	// Monitor ffmpeg in background.
 	go func() {
 		waitErr := cmd.Wait()
+		// Snapshot the context state the instant Wait returns, before any
+		// logging or state publishing: a cancellation racing a natural error
+		// exit would otherwise be read late and misclassify the crash as a
+		// deliberate teardown, leaving the dead URL cached.
+		ctxErr := ctx.Err()
 		s.flushStderr(ctx)
 		s.mu.Lock()
 		s.running = false
 		s.waitErr = waitErr
 		s.mu.Unlock()
 		s.logWaitResult(ctx, waitErr)
+		invalidateResolvedOnError(ctxErr, opts.SourcePath, opts.InputPath, waitErr)
 		close(s.done)
 	}()
 
 	return s, nil
+}
+
+// invalidateResolvedOnError drops the cached resolve for a placeholder when its
+// ffmpeg process died on an error of its own, so the next resolve goes back to
+// the plugin fresh rather than reusing a URL the failure implicates.
+//
+// ctxErr is the context state snapshotted the moment cmd.Wait returned. A
+// deliberate teardown — a seek restart or a stop — cancels the context first, so
+// a non-nil ctxErr is how we tell "we killed it" from "it fell over". Only the
+// latter should invalidate: cancelling on every restart would defeat the cache
+// the restart is meant to hit. usedURL is the resolved input this session
+// actually played, so a stale session's death cannot evict a newer cached URL.
+func invalidateResolvedOnError(ctxErr error, sourcePath, usedURL string, waitErr error) {
+	if waitErr == nil || ctxErr != nil {
+		return
+	}
+	strm.InvalidateResolved(sourcePath, usedURL)
 }
 
 // IsMPEG2VideoCodec reports whether a probed video codec name identifies
@@ -1693,6 +1722,10 @@ func (s *TranscodeSession) restart(
 
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, bin, args...)
+	// SIGTERM on cancel so ffmpeg hangs up its remote HTTP connections cleanly;
+	// see the matching comment at the initial launch. WaitDelay escalates to
+	// SIGKILL if it lingers.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -1733,12 +1766,14 @@ func (s *TranscodeSession) restart(
 
 	go func() {
 		waitErr := cmd.Wait()
+		ctxErr := ctx.Err() // snapshot immediately; see the initial-launch monitor.
 		s.flushStderr(ctx)
 		s.mu.Lock()
 		s.running = false
 		s.waitErr = waitErr
 		s.mu.Unlock()
 		s.logWaitResult(ctx, waitErr)
+		invalidateResolvedOnError(ctxErr, opts.SourcePath, opts.InputPath, waitErr)
 		close(s.done)
 	}()
 
