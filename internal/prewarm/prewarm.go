@@ -63,8 +63,29 @@ type Warmer struct {
 	inFlight map[int]struct{}
 }
 
-// New returns a warmer. A nil ensurer makes every Warm a no-op, so a deployment
-// without probe repair simply does not pre-warm.
+var (
+	sharedOnce sync.Once
+	shared     *Warmer
+)
+
+// Shared returns the process-wide warmer.
+//
+// The guarantees this package makes — one warm per file at a time, and a hard
+// ceiling on concurrent scrapes — are properties of the PROCESS, not of a
+// Warmer. Two instances mean two semaphores and two in-flight maps, so the
+// ceiling doubles and the same file can be scraped twice at once. That is not a
+// wiring mistake to be careful about; it is a promise a per-instance value
+// cannot keep, and there is more than one detail service in this server.
+//
+// The first caller supplies the dependencies; later callers get the same
+// warmer. A nil ensurer makes every Warm a no-op.
+func Shared(ensurer Ensurer, log *slog.Logger) *Warmer {
+	sharedOnce.Do(func() { shared = New(ensurer, log) })
+	return shared
+}
+
+// New returns a warmer. Prefer Shared: the concurrency ceiling and per-file
+// dedup only hold within a single instance.
 func New(ensurer Ensurer, log *slog.Logger) *Warmer {
 	if log == nil {
 		log = slog.Default()

@@ -44,6 +44,13 @@ import (
 // the source is identified, and it is stamped server-side.
 const EventSuffix = "scan.changes"
 
+// pushQueueDepth buffers pushes between the hub reader and the worker.
+//
+// Small on purpose: a push is a hint that files exist, and the poll is the
+// backstop. Buffering deeply would trade a visible drop for a long queue of
+// stale work that still ends up racing the poll.
+const pushQueueDepth = 32
+
 // ingestTimeout bounds one ingest. Generous: the work is a database write plus
 // an enqueue, and the alternative to finishing is a file that stays invisible
 // until the next poll.
@@ -104,13 +111,34 @@ func (c *Consumer) Start(ctx context.Context) {
 		return
 	}
 
+	c.mu.Lock()
+	if c.unsubscribe != nil {
+		// Already running. Subscribing again would orphan the first
+		// subscription: Stop releases only the latest, and the original reader
+		// would live until its context ended.
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+
 	ch, unsubscribe := c.hub.Subscribe()
 	c.mu.Lock()
 	c.unsubscribe = unsubscribe
 	c.mu.Unlock()
 
+	// The reader must not do the work.
+	//
+	// handle() queries for sources and then ingests, each with its own timeout,
+	// so it can occupy the reader for tens of seconds. The hub publishes into a
+	// small buffer and DISCARDS on overflow rather than blocking — and Silo's
+	// event stream is chatty, so a slow reader loses events silently. The ones
+	// lost would include subsequent pushes, quietly demoting this back to the
+	// ten-minute poll with nothing to show for it.
+	work := make(chan events.Envelope, pushQueueDepth)
+
 	go func() {
 		defer unsubscribe()
+		defer close(work)
 		for {
 			select {
 			case <-ctx.Done():
@@ -119,8 +147,23 @@ func (c *Consumer) Start(ctx context.Context) {
 				if !ok {
 					return
 				}
-				c.handle(ctx, env)
+				select {
+				case work <- env:
+				default:
+					// Our own queue is full, which means ingests are falling
+					// behind rather than the hub being chatty. Said out loud
+					// because the alternative is a push path that looks healthy
+					// while doing nothing.
+					c.log.Warn("scanpush: ingest queue full, dropping a push; changes will wait for the next poll",
+						"queue_depth", pushQueueDepth)
+				}
 			}
+		}
+	}()
+
+	go func() {
+		for env := range work {
+			c.handle(ctx, env)
 		}
 	}()
 }

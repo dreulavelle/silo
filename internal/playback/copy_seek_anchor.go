@@ -66,16 +66,43 @@ func lookupAnchor(key string) (copySeekAnchor, bool) {
 	return got.anchor, true
 }
 
-// storeAnchor caches an anchor, clearing the cache wholesale when it grows past
-// its bound. Wholesale rather than LRU on purpose: entries are cheap to
-// recompute, the cache exists to make scrubbing feel instant within a session,
-// and tracking recency would cost more than it saves.
+// storeAnchor caches an anchor, making room when the cache is full.
+//
+// Room is made by dropping expired entries first, and only then by dropping the
+// soonest-to-expire. Clearing wholesale would be simpler, and was wrong: this
+// cache holds ONLY placeholders, where a miss costs a provider scrape plus a
+// remote demux. Emptying it takes every active viewer's anchors at once, so
+// everyone scrubbing at that moment pays that cost together.
+//
+// Expired entries are also swept here rather than by a timer: nothing else
+// visits this map, so without a sweep they occupy the bound and bring the
+// eviction forward.
 func storeAnchor(key string, a copySeekAnchor) {
 	anchorCacheMu.Lock()
 	defer anchorCacheMu.Unlock()
+
 	if len(anchorCache) >= anchorCacheMax {
-		clear(anchorCache)
+		now := time.Now()
+		for k, v := range anchorCache {
+			if now.After(v.expires) {
+				delete(anchorCache, k)
+			}
+		}
+		// Still full: every entry is live, so drop the one closest to expiring.
+		// One eviction per insertion keeps the cache at its bound without ever
+		// emptying it.
+		if len(anchorCache) >= anchorCacheMax {
+			var oldestKey string
+			var oldest time.Time
+			for k, v := range anchorCache {
+				if oldestKey == "" || v.expires.Before(oldest) {
+					oldestKey, oldest = k, v.expires
+				}
+			}
+			delete(anchorCache, oldestKey)
+		}
 	}
+
 	anchorCache[key] = cachedAnchor{anchor: a, expires: time.Now().Add(anchorCacheTTL)}
 }
 
@@ -117,8 +144,6 @@ func ResolveCopySeekAnchor(
 	if strings.TrimSpace(inputPath) == "" {
 		return 0, 0, fmt.Errorf("resolve copy seek anchor: empty input path")
 	}
-	// A placeholder holds a URL, not media. Probing the file itself fails, and
-	// the failure surfaces as "Failed to resolve remux seek position" the first
 	if segmentDuration <= 0 {
 		segmentDuration = DefaultSegmentDuration
 	}

@@ -96,6 +96,12 @@ func TestAnchorCacheIsBounded(t *testing.T) {
 	if size > anchorCacheMax {
 		t.Errorf("cache holds %d entries, want at most %d", size, anchorCacheMax)
 	}
+	// And it must not have emptied itself doing so. This cache holds only
+	// placeholders, where a miss costs a provider scrape plus a remote demux —
+	// clearing wholesale takes every active viewer's anchors at once.
+	if size < anchorCacheMax/2 {
+		t.Errorf("cache dropped to %d entries; eviction should not empty it", size)
+	}
 }
 
 // StartTranscode stores the RESOLVED opts on the session and restart() reads

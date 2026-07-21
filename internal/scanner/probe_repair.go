@@ -37,6 +37,18 @@ func NeedsCriticalProbeRepair(file *models.MediaFile) bool {
 	// below (chapters in particular, which round-trips through JSON and can come
 	// back nil) must not re-arm a network round trip on every press of play.
 	if strm.IsPlaceholderPath(file.FilePath) {
+		// Converged: it has been probed and carries what playback plans from.
+		// This escape has to come first and has to be unconditional, because
+		// the audio checks below can never be satisfied by a title that simply
+		// has no audio — a silent film, a music video with a stripped track, or
+		// anything whose audio stream ffprobe cannot name. Without it those
+		// re-scrape on every page load and every press of play, forever, which
+		// is the exact storm this guard exists to prevent.
+		probed := file.ProbeUpdatedAt != nil &&
+			strings.TrimSpace(file.ProbeSource) == strm.ProbeSourcePlaceholder
+		if probed && file.Duration > 0 && strings.TrimSpace(file.Container) != "" {
+			return false
+		}
 		return file.Duration <= 0 ||
 			strings.TrimSpace(file.Container) == "" ||
 			strings.TrimSpace(file.CodecAudio) == "" ||

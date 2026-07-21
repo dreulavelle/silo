@@ -169,3 +169,27 @@ func TestWarmIsSafeUnderConcurrentCallers(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// The guarantees this package makes are properties of the process, not of a
+// Warmer: two instances mean two semaphores and two in-flight maps, so the
+// ceiling doubles and the same file can be scraped twice at once. There is more
+// than one detail service in this server, so this cannot be left to wiring
+// discipline.
+func TestSharedReturnsOneWarmerProcessWide(t *testing.T) {
+	e := &stubEnsurer{release: make(chan struct{})}
+	defer close(e.release)
+
+	a := Shared(e, discard())
+	b := Shared(&stubEnsurer{}, discard()) // different deps, same warmer
+	if a != b {
+		t.Fatal("Shared returned two warmers; the dedup and ceiling would not hold across them")
+	}
+
+	// And dedup genuinely spans call sites.
+	a.Warm(&models.MediaFile{ID: 99})
+	b.Warm(&models.MediaFile{ID: 99})
+	time.Sleep(50 * time.Millisecond)
+	if got := e.calls.Load(); got != 1 {
+		t.Errorf("ran %d resolves for one file across two call sites, want 1", got)
+	}
+}

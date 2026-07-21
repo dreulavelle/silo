@@ -107,12 +107,18 @@ func TestUnprobedPlaceholderNeedsRepair(t *testing.T) {
 		t.Fatal("a freshly scanned placeholder does not want repair; its duration would stay 0")
 	}
 
-	// Each missing piece playback plans from must also trigger repair.
+	// Duration and container are what playback cannot proceed without, and a
+	// placeholder missing either has not converged.
+	//
+	// Audio is deliberately NOT in this list. A row missing audio looks the
+	// same whether the probe failed or the title genuinely has none, and
+	// retrying costs a provider scrape plus a remote read every time. Retrying
+	// forever to serve the first case would punish every silent title with an
+	// unbounded loop; converging instead costs the first case some audio
+	// metadata, which playback can plan around.
 	for name, mutate := range map[string]func(*models.MediaFile){
-		"no duration":     func(f *models.MediaFile) { f.Duration = 0 },
-		"no container":    func(f *models.MediaFile) { f.Container = "" },
-		"no audio codec":  func(f *models.MediaFile) { f.CodecAudio = "" },
-		"no audio tracks": func(f *models.MediaFile) { f.AudioTracks = nil },
+		"no duration":  func(f *models.MediaFile) { f.Duration = 0 },
+		"no container": func(f *models.MediaFile) { f.Container = "" },
 	} {
 		f := &models.MediaFile{
 			FilePath: path, ProbeSource: strm.ProbeSourcePlaceholder, ProbeUpdatedAt: &probed,
@@ -123,5 +129,46 @@ func TestUnprobedPlaceholderNeedsRepair(t *testing.T) {
 		if !NeedsCriticalProbeRepair(f) {
 			t.Errorf("%s: placeholder does not want repair but is missing playback-critical metadata", name)
 		}
+	}
+}
+
+// Not every title has audio. A silent film, a music video with a stripped
+// track, or anything whose audio stream ffprobe cannot name would never satisfy
+// an audio-based check — and for a placeholder each retry is a provider scrape
+// plus a remote container read, on every page load and every press of play,
+// forever.
+func TestProbedPlaceholderWithNoAudioStopsRetrying(t *testing.T) {
+	probed := time.Now().UTC()
+	file := &models.MediaFile{
+		FilePath:       "/library/movies/Silent (1927) [tmdb-1]/Silent (1927) [1080p].strm",
+		ProbeSource:    strm.ProbeSourcePlaceholder,
+		ProbeUpdatedAt: &probed,
+		Duration:       4500,
+		Container:      "matroska,webm",
+		CodecVideo:     "h264",
+		// No audio at all: no codec, no tracks.
+		CodecAudio:  "",
+		AudioTracks: nil,
+	}
+
+	if NeedsCriticalProbeRepair(file) {
+		t.Error("an audio-less placeholder still wants repair; it would re-scrape forever")
+	}
+}
+
+// The escape must not let an unprobed placeholder through — duration is the
+// thing playback cannot do without.
+func TestUnprobedPlaceholderStillWantsRepairEvenWithContainer(t *testing.T) {
+	probed := time.Now().UTC()
+	file := &models.MediaFile{
+		FilePath:       "/library/movies/T (2024) [tmdb-1]/T (2024) [1080p].strm",
+		ProbeSource:    strm.ProbeSourcePlaceholder,
+		ProbeUpdatedAt: &probed,
+		Container:      "matroska,webm",
+		// No duration: the HLS manifest cannot declare a length without it.
+		Duration: 0,
+	}
+	if !NeedsCriticalProbeRepair(file) {
+		t.Error("a placeholder with no duration does not want repair")
 	}
 }

@@ -573,7 +573,7 @@ func NewRouter(deps Dependencies) chi.Router {
 		// detail service the catalog API actually serves from; the one built
 		// in cmd/silo is a separate instance and needs its own.
 		if deps.ProbeEnsurer != nil {
-			detailSvc.SetPlaceholderPrewarmer(prewarm.New(deps.ProbeEnsurer, slog.Default()))
+			detailSvc.SetPlaceholderPrewarmer(prewarm.Shared(deps.ProbeEnsurer, slog.Default()))
 		}
 		detailSvc.SetChapterThumbnailQueuer(deps.ChapterThumbnailQueuer)
 		if deps.ImageResolver != nil {

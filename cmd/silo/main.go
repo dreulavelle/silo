@@ -2442,7 +2442,7 @@ func main() {
 			// Placeholders resolve behind the response rather than inside it,
 			// so opening an item does not wait on a provider scrape.
 			if deps.ProbeEnsurer != nil {
-				detailSvc.SetPlaceholderPrewarmer(prewarm.New(deps.ProbeEnsurer, slog.Default()))
+				detailSvc.SetPlaceholderPrewarmer(prewarm.Shared(deps.ProbeEnsurer, slog.Default()))
 			}
 			detailSvc.SetChapterThumbnailQueuer(deps.ChapterThumbnailQueuer)
 			if deps.ImageResolver != nil {
