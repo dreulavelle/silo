@@ -56,6 +56,10 @@ cmd/silo/main.go
 # opening an item does not wait on a provider scrape.
 internal/catalog/detail.go
 
+# Attaches the prewarmer to the detail service the catalog API serves from.
+# There are two DetailService instances; this is the one that matters.
+internal/api/router.go
+
 # The keyframe probe behind a seek gets a realistic budget for a placeholder:
 # the local eight-second budget guarantees failure against a remote container.
 internal/api/handlers/playback.go

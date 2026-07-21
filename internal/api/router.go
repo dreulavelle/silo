@@ -53,6 +53,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/playback/planstore"
 	"github.com/Silo-Server/silo-server/internal/plugins"
 	"github.com/Silo-Server/silo-server/internal/policy"
+	"github.com/Silo-Server/silo-server/internal/prewarm"
 	"github.com/Silo-Server/silo-server/internal/ratelimit"
 	"github.com/Silo-Server/silo-server/internal/recommendations"
 	mediarequests "github.com/Silo-Server/silo-server/internal/requests"
@@ -567,6 +568,13 @@ func NewRouter(deps Dependencies) chi.Router {
 		detailSvc.SetGroupClaimRepository(groupClaimRepo)
 		detailSvc.SetWorkSummaryProvider(literaryRepo)
 		detailSvc.SetProbeEnsurer(deps.ProbeEnsurer)
+		// Placeholders resolve behind the response rather than inside it, so
+		// opening an item does not wait on a provider scrape. This is the
+		// detail service the catalog API actually serves from; the one built
+		// in cmd/silo is a separate instance and needs its own.
+		if deps.ProbeEnsurer != nil {
+			detailSvc.SetPlaceholderPrewarmer(prewarm.New(deps.ProbeEnsurer, slog.Default()))
+		}
 		detailSvc.SetChapterThumbnailQueuer(deps.ChapterThumbnailQueuer)
 		if deps.ImageResolver != nil {
 			detailSvc.SetImageResolver(deps.ImageResolver)
