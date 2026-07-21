@@ -48,6 +48,11 @@ internal/playback/copy_seek_anchor.go
 internal/playback/subtitle_stream.go
 internal/playback/subtitle_fonts.go
 
+# ffmpeg stderr can quote the resolved input URL, token and all, when a stream
+# errors. truncateStderr is the one funnel every ffmpeg error message passes
+# through, so the credential redaction lives there: one wrapped call.
+internal/playback/subtitles.go
+
 # Two blocks: starting the fork-owned scanpush consumer, and attaching the
 # placeholder prewarmer to the detail service.
 cmd/silo/main.go
