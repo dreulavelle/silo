@@ -565,6 +565,23 @@ func buildTranscodeStartResponse(
 	return resp
 }
 
+// manifestReadyBudget bounds how long a freshly started ffmpeg has to emit its
+// first HLS segment.
+//
+// Eight seconds is ample for a local file, where seeking is a disk seek. For a
+// placeholder ffmpeg is seeking inside a remote container over HTTP, and at the
+// far end of a 4K title that routinely takes longer — the process is killed
+// mid-flight and the seek reports a generic transcode failure.
+//
+// Like the anchor budget, a larger value costs nothing when it is not needed:
+// the wait returns as soon as the manifest appears.
+func manifestReadyBudget(inputPath string) time.Duration {
+	if strm.IsPlaceholderPath(inputPath) {
+		return 45 * time.Second
+	}
+	return 8 * time.Second
+}
+
 // copySeekAnchorBudget bounds the keyframe probe behind a seek.
 //
 // Eight seconds is right for a local file, where the probe is a seek and a
@@ -950,7 +967,7 @@ func (h *PlaybackHandler) commitLegacyLocalReplacement(
 		unlock()
 		return nil, err
 	}
-	if _, err := successor.WaitForManifest(8 * time.Second); err != nil {
+	if _, err := successor.WaitForManifest(manifestReadyBudget(opts.InputPath)); err != nil {
 		_ = successor.Close()
 		unlock()
 		return nil, fmt.Errorf("local successor not ready: %w", err)
