@@ -10,6 +10,7 @@
 #
 # Anything NOT in this list must live in a new file under a fork-owned path:
 #   internal/strm/...          fork-owned Go package
+#   internal/scanpush/...      fork-owned Go package
 #   migrations/sql/9*.sql      fork-owned migrations (sort last, see FORK.md)
 #   fork/, scripts/fork-*      fork tooling
 #
@@ -25,21 +26,23 @@ internal/playback/directplay.go
 # is the most likely source of a rebase conflict.
 internal/playback/transcode.go
 
-# Modified upstream file: two lines dispatching an explicit "native" provider to
-# fork-owned parsing. Small and structurally stable, but this IS an upstream
-# file and upstream owns the surrounding parser.
-internal/autoscan/arrwebhook/parse.go
+# Missing playback metadata for a placeholder is repaired by resolving it and
+# probing the stream behind it, rather than ffprobing a file that holds a URL.
+internal/scanner/probe_repair.go
 
-# New files in upstream packages. These carry less rebase risk than a modified
-# file — nothing to conflict with unless upstream adds a file of the same name —
-# but they are still liabilities, and both are here rather than under a
-# fork-owned path for a concrete reason:
-#
-#   native.go        must be in package arrwebhook to be reachable from Parse.
-#   strm_probe_test.go  tests applyProbeData and probeFile, both unexported in
-#                       package scanner, so it cannot live anywhere else.
-internal/autoscan/arrwebhook/native.go
+# A placeholder whose metadata could not be resolved plans a conservative
+# transcode instead of refusing to play.
+internal/playback/plan_v3.go
+
+# One block starting the fork-owned scanpush consumer.
+cmd/silo/main.go
+
+# New test files in upstream packages. These carry less rebase risk than a
+# modified file — nothing to conflict with unless upstream adds a file of the
+# same name — but they cannot live under a fork-owned path, because they test
+# unexported functions in the package they sit in.
 internal/scanner/strm_probe_test.go
+internal/playback/strm_plan_test.go
 
 # Default image points at this fork's published image rather than upstream's.
 # Both are one-line value swaps on an already-parameterized setting

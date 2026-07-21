@@ -67,6 +67,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/markers"
 	"github.com/Silo-Server/silo-server/internal/mdblist"
 	"github.com/Silo-Server/silo-server/internal/metadata"
+	"github.com/Silo-Server/silo-server/internal/scanpush"
 
 	// Built-in metadata providers self-register into the metadata package's
 	// builtin registry on import; buildProviders resolves their seeded chain
@@ -2068,6 +2069,13 @@ func main() {
 			}
 			taskMgr.Register(tasks.NewAutoscanPollTask(autoscanSvc, intervalMs))
 			taskMgr.Register(tasks.NewAutoscanWebhookRetryTask(autoscanSvc))
+
+			// Let a scan_source plugin report files the instant it writes them,
+			// instead of waiting to be polled. The poll task above stays as the
+			// backstop for anything a push misses.
+			scanPush := scanpush.New(deps.EventsHub, autoscanRepo, autoscanSvc, slog.Default())
+			scanPush.Start(appCtx)
+			defer scanPush.Stop()
 		}
 		reconcileProviderIDRepo := catalog.NewProviderIDRepository(deps.DB)
 		reconcileEpisodeRepo := catalog.NewEpisodeRepository(deps.DB)

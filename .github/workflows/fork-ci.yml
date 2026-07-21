@@ -89,7 +89,7 @@ jobs:
 
           declared="$(grep -vE '^\s*(#|$)' fork/touched-files.txt | sort -u)"
           actual="$(git diff --name-only "$UPSTREAM_COMMIT..HEAD" \
-            | grep -vE '^(fork/|scripts/fork-|\.github/workflows/fork-|FORK\.md$|internal/strm/|migrations/sql/9)' \
+            | grep -vE '^(fork/|scripts/fork-|\.github/workflows/fork-|FORK\.md$|internal/strm/|internal/scanpush/|migrations/sql/9)' \
             | sort -u)"
 
           undeclared="$(comm -13 <(printf '%s\n' "$declared") <(printf '%s\n' "$actual") || true)"
@@ -98,7 +98,7 @@ jobs:
             echo "::error::Undeclared upstream file modifications (rebase liabilities):"
             printf '%s\n' "$undeclared" | sed 's/^/  /'
             echo
-            echo "Either move the change into a fork-owned path (internal/strm/, fork/,"
+            echo "Either move the change into a fork-owned path (internal/strm/, internal/scanpush/, fork/,"
             echo "migrations/sql/9*.sql) or add it to fork/touched-files.txt."
             exit 1
           fi
