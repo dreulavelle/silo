@@ -200,22 +200,50 @@ func followInternalHop(ctx context.Context, target string) (string, error) {
 		}
 		return resolved, nil
 
-	case resp.StatusCode == http.StatusServiceUnavailable:
-		// Conventional "not ready yet / temporarily unavailable" from a
-		// resolver. Surface it as-is so the caller can map it to a retryable
-		// response rather than a hard failure.
-		return "", &ResolverUnavailableError{Status: resp.StatusCode}
+	case isTemporaryUpstream(resp.StatusCode):
+		// The resolver is reachable and cannot serve right now. That covers
+		// more than "no streams yet": the provider behind it may be down (502),
+		// timing out (504), or throttling us (429). All are temporary, all are
+		// worth retrying, and none of them mean this server is broken — which
+		// is what a 500 would tell the viewer and the client.
+		return "", &ResolverUnavailableError{
+			Status:     resp.StatusCode,
+			RetryAfter: strings.TrimSpace(resp.Header.Get("Retry-After")),
+		}
 
 	default:
 		return "", fmt.Errorf("strm: resolver returned unexpected status %d", resp.StatusCode)
 	}
 }
 
-// ResolverUnavailableError reports that a resolver was reached but had nothing
-// to serve yet. It is distinct from a transport failure because it is expected
-// and retryable: the title may simply not be available right now.
+// isTemporaryUpstream reports whether a resolver status means "try again".
+//
+// Deliberately a small, explicit set. A 4xx that is not 429 is a real fault —
+// a malformed request, a missing route — and quietly retrying those would hide
+// a bug behind a spinner.
+func isTemporaryUpstream(status int) bool {
+	switch status {
+	case http.StatusServiceUnavailable, // nothing to serve yet
+		http.StatusBadGateway,      // the provider behind the resolver is down
+		http.StatusGatewayTimeout,  // ...or too slow
+		http.StatusTooManyRequests: // ...or throttling us
+		return true
+	}
+	return false
+}
+
+// ResolverUnavailableError reports that a resolver was reached but cannot serve
+// right now. It is distinct from a transport failure because it is expected and
+// retryable: the title may not be released, the provider may be down, or we may
+// be throttled.
 type ResolverUnavailableError struct {
 	Status int
+
+	// RetryAfter carries the upstream's own hint verbatim, when it gave one.
+	// Passing it on lets a client back off by the provider's schedule instead
+	// of guessing — which is the difference between waiting out a rate limit
+	// and deepening it.
+	RetryAfter string
 }
 
 func (e *ResolverUnavailableError) Error() string {

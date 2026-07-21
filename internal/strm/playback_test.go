@@ -185,3 +185,62 @@ func portOf(t *testing.T, rawURL string) string {
 	}
 	return u.Port()
 }
+
+// A resolver that cannot serve is not a broken server. The provider behind it
+// may be down, timing out, or throttling us — all temporary, all retryable, and
+// none of them mean this server has failed. Answering 500 tells the viewer
+// otherwise and tells the client not to bother trying again.
+func TestServePlaceholderTreatsProviderOutagesAsRetryable(t *testing.T) {
+	for _, upstream := range []int{
+		http.StatusServiceUnavailable, // nothing to serve yet
+		http.StatusBadGateway,         // provider down
+		http.StatusGatewayTimeout,     // provider too slow
+		http.StatusTooManyRequests,    // throttled
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(upstream)
+		}))
+		path := filepath.Join(t.TempDir(), "m.strm")
+		if err := os.WriteFile(path, []byte(srv.URL+pluginRoutePrefix+"8/resolve/movie/tmdb:1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		SetHostPort(portOf(t, srv.URL))
+
+		rec := httptest.NewRecorder()
+		_ = ServePlaceholder(rec, httptest.NewRequest(http.MethodGet, "/s", nil), path)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("upstream %d -> client saw %d, want 503", upstream, rec.Code)
+		}
+		if got := rec.Header().Get("Retry-After"); got != "30" {
+			t.Errorf("upstream %d -> Retry-After = %q, want the upstream's own hint passed through", upstream, got)
+		}
+		srv.Close()
+		allowedPort.Store(nil)
+	}
+}
+
+// A genuine fault must NOT be dressed up as retryable: quietly retrying a
+// malformed request or a missing route hides a bug behind a spinner.
+func TestServePlaceholderKeepsRealFaultsDistinct(t *testing.T) {
+	for _, upstream := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(upstream)
+		}))
+		path := filepath.Join(t.TempDir(), "m.strm")
+		if err := os.WriteFile(path, []byte(srv.URL+pluginRoutePrefix+"8/resolve/movie/tmdb:1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		SetHostPort(portOf(t, srv.URL))
+
+		rec := httptest.NewRecorder()
+		_ = ServePlaceholder(rec, httptest.NewRequest(http.MethodGet, "/s", nil), path)
+
+		if rec.Code == http.StatusServiceUnavailable {
+			t.Errorf("upstream %d was reported as retryable; it is a fault", upstream)
+		}
+		srv.Close()
+		allowedPort.Store(nil)
+	}
+}

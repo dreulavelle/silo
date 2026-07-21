@@ -96,8 +96,15 @@ func writePlaceholderError(w http.ResponseWriter, r *http.Request, filePath stri
 		// ResolverUnavailableError exists precisely to carry this distinction.
 		// It was being caught by the default branch, so the type was recording
 		// something nothing acted on.
-		slog.InfoContext(ctx, "strm: resolver has nothing to serve yet",
-			"component", "strm", "path", filePath, "status", unavailableErr.Status)
+		slog.InfoContext(ctx, "strm: resolver cannot serve this yet",
+			"component", "strm", "path", filePath,
+			"status", unavailableErr.Status, "retry_after", unavailableErr.RetryAfter)
+		// Pass the upstream's own backoff hint through when it gave one, so a
+		// client waits out a rate limit on the provider's schedule rather than
+		// guessing and deepening it.
+		if unavailableErr.RetryAfter != "" {
+			w.Header().Set("Retry-After", unavailableErr.RetryAfter)
+		}
 		http.Error(w, "not available yet", http.StatusServiceUnavailable)
 
 	case errors.Is(err, os.ErrNotExist):
