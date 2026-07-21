@@ -3,6 +3,7 @@ package strm
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,4 +143,45 @@ func TestServePlaceholderFollowsRewrites(t *testing.T) {
 	if got := second.Header().Get("Location"); got != "https://cdn.example.com/second.mkv" {
 		t.Errorf("Location after rewrite = %q, want the new target", got)
 	}
+}
+
+// A title that is not released, not cached, or briefly unavailable is the most
+// common way playback fails, and it is not a fault. Answering 500 tells a
+// viewer the server is broken and tells a client not to retry — both wrong.
+func TestServePlaceholderReportsUnavailableAsRetryable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "movie.strm")
+
+	// A resolver that is reachable but has nothing to serve.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	target := srv.URL + pluginRoutePrefix + "8/resolve/movie/tmdb:1"
+	if err := os.WriteFile(path, []byte(target+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetHostPort(portOf(t, srv.URL))
+	t.Cleanup(func() { allowedPort.Store(nil) })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	_ = ServePlaceholder(rec, req, path)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503; a title that is not out yet is not a server fault", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(strings.ToLower(body), "internal server error") {
+		t.Errorf("body = %q, want something a viewer can act on", strings.TrimSpace(body))
+	}
+}
+
+func portOf(t *testing.T, rawURL string) string {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Port()
 }

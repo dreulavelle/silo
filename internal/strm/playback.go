@@ -66,6 +66,7 @@ func writePlaceholderError(w http.ResponseWriter, r *http.Request, filePath stri
 	ctx := r.Context()
 
 	var schemeErr *InvalidSchemeError
+	var unavailableErr *ResolverUnavailableError
 	switch {
 	case errors.As(err, &schemeErr):
 		// Loud on purpose. In normal operation this cannot happen: whatever
@@ -84,6 +85,20 @@ func writePlaceholderError(w http.ResponseWriter, r *http.Request, filePath stri
 		slog.InfoContext(ctx, "strm: placeholder has no target yet",
 			"component", "strm", "path", filePath)
 		http.Error(w, "stream not ready", http.StatusServiceUnavailable)
+
+	case errors.As(err, &unavailableErr):
+		// The resolver was reached and said it has nothing to serve right now —
+		// a title that is not released, not cached, or briefly unavailable.
+		// This is the single most common way playback fails and it is not a
+		// fault: answering 500 tells a viewer the server is broken and tells a
+		// client not to bother retrying, when both are wrong.
+		//
+		// ResolverUnavailableError exists precisely to carry this distinction.
+		// It was being caught by the default branch, so the type was recording
+		// something nothing acted on.
+		slog.InfoContext(ctx, "strm: resolver has nothing to serve yet",
+			"component", "strm", "path", filePath, "status", unavailableErr.Status)
+		http.Error(w, "not available yet", http.StatusServiceUnavailable)
 
 	case errors.Is(err, os.ErrNotExist):
 		slog.WarnContext(ctx, "strm: placeholder file is missing",
