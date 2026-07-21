@@ -227,14 +227,17 @@ func resolveCopySeekAnchor(
 ) (float64, int, error) {
 
 	interval := strconv.FormatFloat(requestedSeekSeconds, 'f', 6, 64) + "%+0.001"
-	cmd := exec.CommandContext(ctx, ffprobePathFromFFmpeg(ffmpegPath),
-		"-v", "error",
+	// The keyframe probe opens and seeks the same remote container the
+	// transcode does, and pays the same per-request latency for it.
+	probeArgs := append([]string{"-v", "error"}, strm.InputOptions(inputPath)...)
+	probeArgs = append(probeArgs,
 		"-select_streams", "v:0",
 		"-read_intervals", interval,
 		"-show_entries", "packet=pts_time,dts_time,flags",
 		"-of", "json",
 		inputPath,
 	)
+	cmd := exec.CommandContext(ctx, ffprobePathFromFFmpeg(ffmpegPath), probeArgs...)
 	var stdout bytes.Buffer
 	stderr := newBoundedTailBuffer(stderrTailMaxBytes)
 	cmd.Stdout = &stdout

@@ -358,6 +358,12 @@ func buildFFmpegArgs(opts TranscodeOpts) []string {
 		}
 	}
 
+	// Read-ahead for a remote input, before -i so it applies to the input.
+	// A resolved placeholder is fetched from a CDN whose every range request
+	// costs about half a second regardless of size, so the cost of opening and
+	// seeking is request count. See strm.InputOptions for the measurements.
+	args = append(args, strm.InputOptions(opts.InputPath)...)
+
 	// Input file.
 	args = append(args, "-i", opts.InputPath)
 	args = append(args, "-map_metadata", "-1")
