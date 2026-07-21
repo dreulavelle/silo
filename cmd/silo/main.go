@@ -67,6 +67,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/markers"
 	"github.com/Silo-Server/silo-server/internal/mdblist"
 	"github.com/Silo-Server/silo-server/internal/metadata"
+	"github.com/Silo-Server/silo-server/internal/prewarm"
 	"github.com/Silo-Server/silo-server/internal/scanpush"
 
 	// Built-in metadata providers self-register into the metadata package's
@@ -2436,6 +2437,11 @@ func main() {
 			detailSvc.SetFolderRepository(folderRepo)
 			detailSvc.SetGroupClaimRepository(catalog.NewGroupClaimRepository(deps.DB))
 			detailSvc.SetProbeEnsurer(deps.ProbeEnsurer)
+			// Placeholders resolve behind the response rather than inside it,
+			// so opening an item does not wait on a provider scrape.
+			if deps.ProbeEnsurer != nil {
+				detailSvc.SetPlaceholderPrewarmer(prewarm.New(deps.ProbeEnsurer, slog.Default()))
+			}
 			detailSvc.SetChapterThumbnailQueuer(deps.ChapterThumbnailQueuer)
 			if deps.ImageResolver != nil {
 				detailSvc.SetImageResolver(deps.ImageResolver)

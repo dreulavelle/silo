@@ -18,6 +18,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/models"
 	"github.com/Silo-Server/silo-server/internal/overlays"
 	"github.com/Silo-Server/silo-server/internal/playback"
+	"github.com/Silo-Server/silo-server/internal/strm"
 	"github.com/Silo-Server/silo-server/internal/userstore"
 )
 
@@ -613,6 +614,7 @@ type DetailService struct {
 	workSummary       WorkSummaryProvider
 	originalLangFn    func(context.Context, string) string
 	probeEnsurer      PlaybackProbeEnsurer
+	prewarmer         PlaceholderPrewarmer
 	chapterThumbs     ChapterThumbnailQueuer
 }
 
@@ -657,6 +659,17 @@ func (s *DetailService) SetWorkSummaryProvider(provider WorkSummaryProvider) {
 
 func (s *DetailService) SetProbeEnsurer(ensurer PlaybackProbeEnsurer) {
 	s.probeEnsurer = ensurer
+}
+
+// PlaceholderPrewarmer resolves a placeholder's metadata in the background.
+type PlaceholderPrewarmer interface {
+	Warm(file *models.MediaFile)
+}
+
+// SetPlaceholderPrewarmer enables background resolution for .strm placeholders.
+// Without one, placeholders fall back to resolving inline.
+func (s *DetailService) SetPlaceholderPrewarmer(w PlaceholderPrewarmer) {
+	s.prewarmer = w
 }
 
 func (s *DetailService) SetChapterThumbnailQueuer(queuer ChapterThumbnailQueuer) {
@@ -3323,6 +3336,17 @@ func (s *DetailService) preparePlaybackFiles(ctx context.Context, files []*model
 	prepared := make([]*models.MediaFile, 0, len(files))
 	for _, file := range files {
 		if file == nil {
+			continue
+		}
+		// A placeholder is resolved in the BACKGROUND rather than inline.
+		// Resolving here means a provider scrape plus a remote container read
+		// while the response is being built — measured at fifteen seconds for
+		// one episode, paid per quality tier, sequentially. A detail page's job
+		// is to appear; the metadata catches up behind it, and playback still
+		// resolves synchronously because it genuinely cannot proceed without.
+		if s.prewarmer != nil && strm.IsPlaceholderPath(file.FilePath) {
+			s.prewarmer.Warm(file)
+			prepared = append(prepared, file)
 			continue
 		}
 		if s.probeEnsurer != nil {

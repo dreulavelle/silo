@@ -26,6 +26,7 @@ Fork-owned paths:
 |---|---|
 | `internal/strm/` | All on-demand playback logic |
 | `internal/scanpush/` | Plugin-pushed autoscan changes (push instead of poll) |
+| `internal/prewarm/` | Background placeholder resolution ahead of playback |
 | `migrations/sql/9*.sql` | Fork schema (see *Migrations* below) |
 | `fork/` | Pin, manifest, fork docs |
 | `scripts/fork-*.sh` | Fork tooling |
