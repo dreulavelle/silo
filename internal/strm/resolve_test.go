@@ -240,3 +240,54 @@ func newLoopbackServer(t *testing.T, h http.HandlerFunc) *httptest.Server {
 	}
 	return srv
 }
+
+// Go transmits RequestURI verbatim without normalising it, so a naive prefix
+// check is satisfied by a path the ORIGIN resolves back to something else
+// entirely. That turns a placeholder into a blind GET against anything on
+// loopback — a database, a cache, an admin UI.
+func TestHostLocalRouteRejectsTraversal(t *testing.T) {
+	for _, target := range []string{
+		"http://127.0.0.1:9200/api/v1/plugins/../../../admin/secrets",
+		"http://127.0.0.1:6379/api/v1/plugins/../../../",
+		"http://localhost:5432/api/v1/plugins/..%2f..%2fadmin",
+		"http://127.0.0.1:8080/api/v1/plugins/../admin",
+		"http://127.0.0.1:8080/api/v1/plugins/1/../../../etc",
+		"http://127.0.0.1:8080/api/v1/plugins/%2e%2e/admin",
+	} {
+		if isHostLocalPluginRoute(target) {
+			t.Errorf("followable, and must not be: %s", target)
+		}
+	}
+}
+
+// Pinning to the port this server listens on narrows the followable target
+// from "everything on loopback" to this process.
+func TestHostLocalRouteHonoursThePinnedPort(t *testing.T) {
+	SetHostPort("8080")
+	t.Cleanup(func() { allowedPort.Store(nil) })
+
+	if !isHostLocalPluginRoute("http://127.0.0.1:8080/api/v1/plugins/8/resolve/movie/tmdb:1") {
+		t.Error("the server's own plugin route was rejected")
+	}
+	for _, other := range []string{
+		"http://127.0.0.1:9200/api/v1/plugins/8/resolve/movie/tmdb:1",
+		"http://127.0.0.1:6379/api/v1/plugins/8/resolve/movie/tmdb:1",
+		"http://127.0.0.1/api/v1/plugins/8/resolve/movie/tmdb:1",
+	} {
+		if isHostLocalPluginRoute(other) {
+			t.Errorf("followable on a port this server does not own: %s", other)
+		}
+	}
+}
+
+// The ordinary case must keep working.
+func TestHostLocalRouteStillFollowsRealPluginRoutes(t *testing.T) {
+	for _, target := range []string{
+		"http://127.0.0.1:8080/api/v1/plugins/8/resolve/movie/tmdb:603",
+		"http://localhost:8080/api/v1/plugins/12/resolve/series/tvdb:1/1/9",
+	} {
+		if !isHostLocalPluginRoute(target) {
+			t.Errorf("a legitimate plugin route was rejected: %s", target)
+		}
+	}
+}

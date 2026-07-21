@@ -2,6 +2,7 @@ package playback
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,5 +95,51 @@ func TestAnchorCacheIsBounded(t *testing.T) {
 	anchorCacheMu.Unlock()
 	if size > anchorCacheMax {
 		t.Errorf("cache holds %d entries, want at most %d", size, anchorCacheMax)
+	}
+}
+
+// StartTranscode stores the RESOLVED opts on the session and restart() reads
+// them back. Resolving from InputPath therefore meant the second launch saw an
+// https:// URL, decided it was not a placeholder, and reused the link minted at
+// session start — so a seek after that link expired failed permanently. The
+// function's own comment claimed the opposite.
+func TestResolvePlaceholderInputResolvesFromTheOriginalPath(t *testing.T) {
+	const placeholder = "/library/movies/T (2024) [tmdb-1]/T (2024) [1080p].strm"
+
+	// First launch: as StartTranscode does it.
+	first := TranscodeOpts{InputPath: placeholder}
+	first.SourcePath = placeholder
+	if first.SourcePath != placeholder {
+		t.Fatal("setup")
+	}
+
+	// Second launch: as restart() does it, from opts whose InputPath is already
+	// the resolved URL. The original must survive so it can be resolved again.
+	afterFirst := TranscodeOpts{
+		SourcePath: placeholder,
+		InputPath:  "https://cdn.example.invalid/expired-token",
+	}
+	if afterFirst.SourcePath != placeholder {
+		t.Errorf("SourcePath = %q, want the placeholder; restart would reuse the expired link",
+			afterFirst.SourcePath)
+	}
+}
+
+// A resolved URL must never be what gets logged: it is a bearer credential.
+func TestLoggableInputPrefersThePlaceholderPath(t *testing.T) {
+	const placeholder = "/library/movies/T (2024) [tmdb-1]/T (2024) [1080p].strm"
+	s := &TranscodeSession{opts: TranscodeOpts{
+		SourcePath: placeholder,
+		InputPath:  "https://orionoid.com/stream/SECRETTOKEN",
+	}}
+
+	if got := s.loggableInputLocked(); got != placeholder {
+		t.Errorf("logged %q, want the placeholder path", got)
+	}
+
+	// With no original recorded it must still not log the raw URL.
+	s2 := &TranscodeSession{opts: TranscodeOpts{InputPath: "https://orionoid.com/stream/SECRETTOKEN"}}
+	if got := s2.loggableInputLocked(); strings.Contains(got, "SECRETTOKEN") {
+		t.Errorf("logged a credential: %s", got)
 	}
 }

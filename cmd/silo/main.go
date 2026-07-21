@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -69,6 +70,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/metadata"
 	"github.com/Silo-Server/silo-server/internal/prewarm"
 	"github.com/Silo-Server/silo-server/internal/scanpush"
+	"github.com/Silo-Server/silo-server/internal/strm"
 
 	// Built-in metadata providers self-register into the metadata package's
 	// builtin registry on import; buildProviders resolves their seeded chain
@@ -2593,6 +2595,13 @@ func main() {
 
 	errCh := make(chan error, 3)
 	go func() {
+		// Pin which loopback port a .strm may be followed to. Loopback alone is
+		// a large surface — a database, a cache, an admin UI and this server all
+		// sit on it — and a placeholder that could address any of them is an
+		// SSRF primitive.
+		if _, port, perr := net.SplitHostPort(cfg.Server.Listen); perr == nil {
+			strm.SetHostPort(port)
+		}
 		slog.Info("HTTP server listening", "addr", cfg.Server.Listen)
 		if listenErr := srv.ListenAndServe(); listenErr != nil && listenErr != http.ErrServerClosed {
 			errCh <- fmt.Errorf("HTTP server error: %w", listenErr)

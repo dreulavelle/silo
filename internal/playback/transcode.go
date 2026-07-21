@@ -31,7 +31,12 @@ func init() {
 // TranscodeOpts holds configuration for an HLS transcode session.
 type TranscodeOpts struct {
 	InputPath string
-	OutputDir string // e.g., /tmp/silo-transcode/{session_id}/
+
+	// SourcePath is the path as the caller gave it, before any placeholder
+	// resolution. It is what gets re-resolved on a restart and what appears in
+	// logs — a resolved URL is a bearer credential and must not be either.
+	SourcePath string
+	OutputDir  string // e.g., /tmp/silo-transcode/{session_id}/
 	// OutputSubdir is the signed, root-relative reconstruction directory. Empty
 	// retains the legacy flat {session_id} layout.
 	OutputSubdir         string
@@ -203,7 +208,9 @@ func StartTranscode(ctx context.Context, opts TranscodeOpts) (*TranscodeSession,
 		bin = ffmpegBinary()
 	}
 
-	log.Printf("playback: ffmpeg cmd: %s %s", bin, strings.Join(args, " "))
+	// Redacted: one of these arguments is a resolved stream URL whose path
+	// segment is a bearer token for the operator's debrid account.
+	log.Printf("playback: ffmpeg cmd: %s %s", bin, strings.Join(strm.RedactAll(args), " "))
 	s.logFFmpegEvent(ctx, "ffmpeg process starting", "")
 
 	cmd := exec.CommandContext(ctx, bin, args...)
@@ -291,7 +298,21 @@ func IsMPEG4Part2VideoCodec(codec string) bool {
 // each time means a seek after a link has expired recovers by itself instead of
 // failing on a stale handle.
 func resolvePlaceholderInput(ctx context.Context, opts TranscodeOpts) (TranscodeOpts, error) {
-	resolved, err := strm.ResolveFileForInput(ctx, opts.InputPath)
+	// Resolve from the ORIGINAL path, not from InputPath.
+	//
+	// StartTranscode stores the resolved opts on the session, and restart()
+	// reads them back — so resolving from InputPath meant the second launch saw
+	// an https:// URL, decided it was not a placeholder, and reused the link
+	// minted at session start. A seek after that link expired failed
+	// permanently, which is the exact opposite of what this function's own
+	// comment promised.
+	source := opts.SourcePath
+	if source == "" {
+		source = opts.InputPath
+	}
+	opts.SourcePath = source
+
+	resolved, err := strm.ResolveFileForInput(ctx, source)
 	if err != nil {
 		return opts, fmt.Errorf("resolve placeholder input: %w", err)
 	}
@@ -1661,7 +1682,7 @@ func (s *TranscodeSession) restart(
 		bin = ffmpegBinary()
 	}
 
-	log.Printf("playback: ffmpeg restart cmd: %s %s", bin, strings.Join(args, " "))
+	log.Printf("playback: ffmpeg restart cmd: %s %s", bin, strings.Join(strm.RedactAll(args), " "))
 	s.logFFmpegEvent(ctx, "ffmpeg process restart", "")
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -2072,7 +2093,9 @@ func (w *ffmpegStderrWriter) Write(p []byte) (int, error) {
 		if idx < 0 {
 			break
 		}
-		line := strings.TrimRight(string(w.partial[:idx]), "\r")
+		// ffmpeg announces its input in prose — "Input #0, ... from '<url>'" —
+		// so the credential has to be found inside the sentence.
+		line := strm.RedactLine(strings.TrimRight(string(w.partial[:idx]), "\r"))
 		w.session.logFFmpegLine(w.ctx, line)
 		w.partial = append([]byte(nil), w.partial[idx+1:]...)
 	}
@@ -2163,11 +2186,21 @@ func (s *TranscodeSession) logWaitResult(ctx context.Context, waitErr error) {
 	s.logFFmpegEvent(ctx, "ffmpeg process exit error", formatWaitError(waitErr))
 }
 
+// loggableInputLocked returns an input identity that is safe to persist.
+func (s *TranscodeSession) loggableInputLocked() string {
+	if s.opts.SourcePath != "" {
+		return s.opts.SourcePath
+	}
+	return strm.Redact(s.opts.InputPath)
+}
+
 func (s *TranscodeSession) ffmpegAttrsLocked() FFmpegLogAttrs {
 	return FFmpegLogAttrs{
-		NodeType:           s.opts.NodeType,
-		ExecutionMode:      s.opts.ExecutionMode,
-		InputPath:          s.opts.InputPath,
+		NodeType:      s.opts.NodeType,
+		ExecutionMode: s.opts.ExecutionMode,
+		// The placeholder path, never the resolved URL: this is persisted per
+		// session and the URL is a credential.
+		InputPath:          s.loggableInputLocked(),
 		OutputDir:          s.opts.OutputDir,
 		TargetResolution:   s.opts.TargetResolution,
 		TargetVideoCodec:   s.opts.TargetCodecVideo,

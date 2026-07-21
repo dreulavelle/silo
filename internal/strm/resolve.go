@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -59,16 +61,63 @@ func isHostLocalPluginRoute(target string) bool {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return false
 	}
-	if !strings.HasPrefix(u.Path, pluginRoutePrefix) {
+
+	// The prefix check runs against the path as it will be SENT, and Go
+	// transmits RequestURI verbatim without normalising it. A target of
+	// /api/v1/plugins/../../../admin/secrets therefore satisfies a naive prefix
+	// test while the origin server resolves it back to /admin/secrets — which
+	// turns a placeholder into a blind GET against anything on loopback.
+	// Rejecting any path that is not already in its cleaned form closes that
+	// without having to reason about how each server normalises.
+	if u.Path != path.Clean(u.Path) || !strings.HasPrefix(path.Clean(u.Path), pluginRoutePrefix) {
+		return false
+	}
+	// An escaped traversal survives Clean because it is still encoded here, and
+	// is decoded by the origin. EscapedPath is what actually goes on the wire.
+	if escaped := u.EscapedPath(); strings.Contains(escaped, "%2e") || strings.Contains(escaped, "%2E") ||
+		strings.Contains(escaped, "%2f") || strings.Contains(escaped, "%2F") {
 		return false
 	}
 
 	host := u.Hostname()
-	if strings.EqualFold(host, "localhost") {
+	if !strings.EqualFold(host, "localhost") {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+
+	// Loopback alone is a very large surface: a database, a cache, an admin UI
+	// and this server all sit on it. Pinning to the port Silo itself listens on
+	// narrows the followable target to this process.
+	return portIsAllowed(u.Port())
+}
+
+// allowedPort is the port host-local placeholder targets may address. Empty
+// means "any loopback port", which is the safe-but-broad default used when the
+// server has not told this package where it listens.
+var allowedPort atomic.Pointer[string]
+
+// SetHostPort pins which loopback port a placeholder may be followed to.
+// Called once at startup with the port this server listens on.
+func SetHostPort(port string) {
+	port = strings.TrimSpace(port)
+	if port == "" {
+		return
+	}
+	allowedPort.Store(&port)
+}
+
+func portIsAllowed(port string) bool {
+	want := allowedPort.Load()
+	if want == nil {
 		return true
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	if port == "" {
+		// No explicit port means the scheme default; it is not this server's.
+		return false
+	}
+	return port == *want
 }
 
 // ResolveTarget turns a placeholder target into a URL a client can actually
