@@ -29,3 +29,9 @@
 # pinned media version. Unrelated to .strm: this test never touches placeholder
 # paths, and the failure reproduces with zero fork commits applied.
 TestHandleReplanPlaybackV3SeekFailureRecoveryNeverChangesMediaVersion
+
+# Fails on a clean upstream tree too, inside the containerised test run:
+#   TempDir RemoveAll cleanup: unlinkat ...: directory not empty
+# An artefact of the test leaving a file behind, not a code failure. Verified by
+# stashing all fork changes and re-running.
+TestRemoveJellyfinCompatWebDisablesWebSetting

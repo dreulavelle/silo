@@ -31,6 +31,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/nodepool"
 	"github.com/Silo-Server/silo-server/internal/playback"
 	"github.com/Silo-Server/silo-server/internal/streamtoken"
+	"github.com/Silo-Server/silo-server/internal/strm"
 	"github.com/Silo-Server/silo-server/internal/subtitles"
 	"github.com/Silo-Server/silo-server/internal/transcodenode"
 	"github.com/Silo-Server/silo-server/internal/userstore"
@@ -564,6 +565,26 @@ func buildTranscodeStartResponse(
 	return resp
 }
 
+// copySeekAnchorBudget bounds the keyframe probe behind a seek.
+//
+// Eight seconds is right for a local file, where the probe is a seek and a
+// short read. A placeholder is neither: the file has to be resolved (a scrape,
+// which is fast when the provider has it cached and seconds when it does not)
+// and ffmpeg then demuxes into a remote container over HTTP to find the
+// keyframe. Measured at roughly twelve seconds for a 4K title, so the local
+// budget guarantees the seek fails — which surfaces in the player as an
+// unexplained "couldn't switch" rather than anything about time.
+//
+// The larger budget costs nothing when it is not needed: the probe returns as
+// soon as it has an answer, and the anchor is cached, so repeat seeks to the
+// same region do not pay it again.
+func copySeekAnchorBudget(inputPath string) time.Duration {
+	if strm.IsPlaceholderPath(inputPath) {
+		return 60 * time.Second
+	}
+	return 8 * time.Second
+}
+
 func (h *PlaybackHandler) resolveLegacyCopySeekAnchor(
 	ctx context.Context,
 	ffmpegPath string,
@@ -575,7 +596,7 @@ func (h *PlaybackHandler) resolveLegacyCopySeekAnchor(
 	if resolver == nil {
 		resolver = playback.ResolveCopySeekAnchor
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, copySeekAnchorBudget(inputPath))
 	defer cancel()
 	return resolver(probeCtx, ffmpegPath, inputPath, requestedSeekSeconds, segmentDuration)
 }

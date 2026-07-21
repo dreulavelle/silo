@@ -50,6 +50,10 @@ internal/playback/subtitle_fonts.go
 # One block starting the fork-owned scanpush consumer.
 cmd/silo/main.go
 
+# The keyframe probe behind a seek gets a realistic budget for a placeholder:
+# the local eight-second budget guarantees failure against a remote container.
+internal/api/handlers/playback.go
+
 # New file in an upstream package: IngestPush, the plugin-push sibling of the
 # webhook IngestChanges. It must live in package autoscan because the work it
 # shares (consumeSourceChanges) is unexported.
