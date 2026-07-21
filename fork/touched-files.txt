@@ -25,6 +25,22 @@ internal/playback/directplay.go
 # is the most likely source of a rebase conflict.
 internal/playback/transcode.go
 
+# Modified upstream file: two lines dispatching an explicit "native" provider to
+# fork-owned parsing. Small and structurally stable, but this IS an upstream
+# file and upstream owns the surrounding parser.
+internal/autoscan/arrwebhook/parse.go
+
+# New files in upstream packages. These carry less rebase risk than a modified
+# file — nothing to conflict with unless upstream adds a file of the same name —
+# but they are still liabilities, and both are here rather than under a
+# fork-owned path for a concrete reason:
+#
+#   native.go        must be in package arrwebhook to be reachable from Parse.
+#   strm_probe_test.go  tests applyProbeData and probeFile, both unexported in
+#                       package scanner, so it cannot live anywhere else.
+internal/autoscan/arrwebhook/native.go
+internal/scanner/strm_probe_test.go
+
 # Default image points at this fork's published image rather than upstream's.
 # Both are one-line value swaps on an already-parameterized setting
 # (${SILO_IMAGE:-...}), so they rebase cleanly unless upstream restructures the
