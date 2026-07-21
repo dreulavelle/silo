@@ -18,6 +18,13 @@
 internal/scanner/scanner.go
 internal/playback/directplay.go
 
+# Transcoding has to resolve a placeholder before ffmpeg opens it: ffmpeg reads
+# the input itself and a .strm is not a container it understands. The edit is
+# one helper plus one call at each of the two ffmpeg launch sites, so it stays
+# narrow — but this is the largest upstream file the fork touches, so churn here
+# is the most likely source of a rebase conflict.
+internal/playback/transcode.go
+
 # Default image points at this fork's published image rather than upstream's.
 # Both are one-line value swaps on an already-parameterized setting
 # (${SILO_IMAGE:-...}), so they rebase cleanly unless upstream restructures the

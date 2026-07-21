@@ -2289,8 +2289,9 @@ func (s *Scanner) processFile(
 		}
 		populateScanIdentity(&mf, filePath, folder.Type, assignment, groupAssignment, existing)
 
-		// Apply probe data if available.
-		if probe != nil {
+		// Apply probe data if available. A placeholder has none by design and
+		// still needs its marker recorded, so it is applied too.
+		if probe != nil || probeSource == strm.ProbeSourcePlaceholder {
 			applyProbeData(&mf, probe, probeSource)
 		}
 
@@ -2371,7 +2372,7 @@ func (s *Scanner) processFile(
 	populateScanIdentity(&mf, filePath, folder.Type, assignment, groupAssignment, nil)
 
 	// Apply probe data if available.
-	if probe != nil {
+	if probe != nil || probeSource == strm.ProbeSourcePlaceholder {
 		applyProbeData(&mf, probe, probeSource)
 	}
 
@@ -3165,6 +3166,17 @@ func identityEvidenceEqual(existing, expected []byte) bool {
 }
 
 func applyProbeData(mf *models.MediaFile, probe *ProbeData, probeSource string) {
+	if probe == nil {
+		// A placeholder has no bytes to describe, but it still has to record
+		// WHY it was not probed. Leaving probe_source empty makes it
+		// indistinguishable from a file whose probe simply has not run, which
+		// sends the repair loop after it forever and leaves playback with no
+		// codec information to plan from.
+		mf.ProbeSource = probeSource
+		now := time.Now().UTC()
+		mf.ProbeUpdatedAt = &now
+		return
+	}
 	mf.CodecVideo = probe.CodecVideo
 	mf.CodecAudio = probe.CodecAudio
 	mf.Resolution = probe.Resolution

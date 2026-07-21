@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Silo-Server/silo-server/internal/strm"
 )
 
 func init() {
@@ -188,6 +190,13 @@ func StartTranscode(ctx context.Context, opts TranscodeOpts) (*TranscodeSession,
 		lastRequestedSegment: opts.StartSegmentNumber,
 	}
 
+	opts, err := resolvePlaceholderInput(ctx, opts)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	s.opts = opts
+
 	args := buildFFmpegArgs(opts)
 	bin := opts.FFmpegPath
 	if bin == "" {
@@ -267,6 +276,29 @@ func IsMPEG4Part2VideoCodec(codec string) bool {
 }
 
 // buildFFmpegArgs constructs the full ffmpeg argument list from TranscodeOpts.
+// resolvePlaceholderInput replaces a .strm input path with the URL it stands
+// for, leaving ordinary local paths untouched.
+//
+// Direct play answers a placeholder with a redirect and never reads the stream.
+// Transcoding has to: ffmpeg opens the input itself, and a .strm is a
+// media-server convention rather than a container, so handing it the file
+// yields "Invalid data found when processing input". Resolving first gives
+// ffmpeg an ordinary HTTP URL, which it reads with range requests — so seeking
+// inside a transcoded remote stream behaves like a local file.
+//
+// Deliberately re-resolved on every ffmpeg launch, including seek restarts.
+// The URLs behind a placeholder are short-lived by design; taking a fresh one
+// each time means a seek after a link has expired recovers by itself instead of
+// failing on a stale handle.
+func resolvePlaceholderInput(ctx context.Context, opts TranscodeOpts) (TranscodeOpts, error) {
+	resolved, err := strm.ResolveFileForInput(ctx, opts.InputPath)
+	if err != nil {
+		return opts, fmt.Errorf("resolve placeholder input: %w", err)
+	}
+	opts.InputPath = resolved
+	return opts, nil
+}
+
 func buildFFmpegArgs(opts TranscodeOpts) []string {
 	// Resolve "auto" into a concrete accel method once so all downstream
 	// helpers (appendHWAccelArgs, appendVideoArgs, etc.) see the real value.
@@ -1613,6 +1645,15 @@ func (s *TranscodeSession) restart(
 		opts.CopySeekAnchorResolved = copySeekAnchorResolved
 	}
 	opts.FastStart = false // seek-restarts use veryfast for better quality
+
+	opts, rerr := resolvePlaceholderInput(ctx, opts)
+	if rerr != nil {
+		s.mu.Lock()
+		s.restarting = false
+		s.waitErr = rerr
+		s.mu.Unlock()
+		return rerr
+	}
 
 	args := buildFFmpegArgs(opts)
 	bin := opts.FFmpegPath
