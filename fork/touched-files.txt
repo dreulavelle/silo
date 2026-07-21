@@ -80,6 +80,9 @@ internal/autoscan/push.go
 # unexported functions in the package they sit in.
 internal/scanner/strm_probe_test.go
 internal/playback/strm_plan_test.go
+# Pins the placeholder-prewarm choke point (preparePlaybackFiles) that both the
+# native detail path and the jellycompat detail/PlaybackInfo path warm through.
+internal/catalog/strm_prewarm_test.go
 
 # Default image points at this fork's published image rather than upstream's.
 # Both are one-line value swaps on an already-parameterized setting
