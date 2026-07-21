@@ -127,11 +127,28 @@ fi
 if (( REBASE_OK )); then
   ok "rebase applies cleanly"
 
+  # internal/imageutil binds libvips through cgo, so without it Go cannot even
+  # load the package graph. That is a property of this machine, not of the
+  # rebase, and conflating the two would report a clean fork as broken —
+  # which is how a checking tool teaches people to ignore it.
+  if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists vips 2>/dev/null; then
+    warn "libvips is not installed here, so build and test cannot run locally"
+    echo "    The rebase itself is clean. To verify fully:"
+    echo "      sudo apt-get install -y libvips-dev   # then re-run"
+    echo "    or let CI do it — fork-ci installs libvips and runs the suite."
+    ok "rebase is clean; build verification skipped"
+    if [[ "$MODE" == "rebase" ]]; then
+      exit 0
+    fi
+    REBASE_VERIFIED=0
+  fi
+
   # The Go build embeds web/dist. Building the real frontend costs minutes and
   # proves nothing about a Go-side rebase, so stub it. web/dist is gitignored.
   mkdir -p "$TRIAL_DIR/web/dist"
   printf '<!doctype html><title>fork-sync stub</title>\n' > "$TRIAL_DIR/web/dist/index.html"
 
+  if (( ${REBASE_VERIFIED-1} )); then
   info "running go build"
   if ! (cd "$TRIAL_DIR" && go build ./... >/dev/null 2>&1); then
     warn "go build FAILED after rebase"
@@ -161,6 +178,7 @@ if (( REBASE_OK )); then
     else
       ok "go test passes"
     fi
+  fi
   fi
 fi
 
