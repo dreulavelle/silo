@@ -6,7 +6,15 @@ import (
 	"time"
 
 	"github.com/Silo-Server/silo-server/internal/models"
+	"github.com/Silo-Server/silo-server/internal/strm"
 )
+
+// placeholderProbeTimeout bounds resolving and probing a placeholder's stream.
+//
+// It covers a resolver scrape plus an HTTP container read, and sits inside the
+// wait before playback starts — long enough to succeed on a cold scrape, short
+// enough that a dead provider fails visibly instead of hanging the player.
+const placeholderProbeTimeout = 45 * time.Second
 
 // NeedsCriticalProbeRepair reports whether playback-critical probe metadata is
 // missing and the file should be reprobed before making playback decisions.
@@ -21,6 +29,18 @@ func NeedsCriticalProbeRepair(file *models.MediaFile) bool {
 	// load and never converged.
 	if file.BaseType == "ebook" {
 		return false
+	}
+	// A placeholder is repaired by resolving it and probing the remote stream —
+	// a scrape plus an HTTP read. That is affordable once, when someone opens
+	// the title, and ruinous on every playback. So once it has the duration and
+	// codecs playback actually plans from, it is done: the remaining criteria
+	// below (chapters in particular, which round-trips through JSON and can come
+	// back nil) must not re-arm a network round trip on every press of play.
+	if strm.IsPlaceholderPath(file.FilePath) {
+		return file.Duration <= 0 ||
+			strings.TrimSpace(file.Container) == "" ||
+			strings.TrimSpace(file.CodecAudio) == "" ||
+			len(file.AudioTracks) == 0
 	}
 	if strings.TrimSpace(file.ProbeSource) == "" || file.ProbeUpdatedAt == nil {
 		return true
@@ -92,16 +112,47 @@ func (e *PlaybackProbeEnsurer) Ensure(ctx context.Context, file *models.MediaFil
 	if reprobeMayScanPackets(file) && timeout < time.Minute {
 		timeout = time.Minute
 	}
+	// Probing a placeholder means resolving it (a scrape) and then reading a
+	// remote container over HTTP. The local-file default does not survive that.
+	if strm.IsPlaceholderPath(file.FilePath) && timeout < placeholderProbeTimeout {
+		timeout = placeholderProbeTimeout
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	probe, err := ProbeFile(probeCtx, e.ffprobePath, file.FilePath)
+	// A placeholder has no local bytes, so probing the file itself fails. Probe
+	// the stream it stands for instead.
+	//
+	// This is the ONE place a placeholder gets real metadata, and it has to
+	// happen: without a duration the HLS manifest cannot declare a total
+	// length, so a player treats the transcode as a live stream that grows as
+	// it goes — the timeline reads 0:00 / 0:08 and there is nothing to seek
+	// against. Codecs matter just as much, since without them playback cannot
+	// tell whether it could direct play and transcodes everything.
+	//
+	// Doing it here rather than at scan time is deliberate: this runs once,
+	// when someone actually opens the title, instead of resolving every
+	// placeholder in the library on every scan.
+	probeSource := "local"
+	probePath := file.FilePath
+	if strm.IsPlaceholderPath(file.FilePath) {
+		resolved, resolveErr := strm.ResolveFileForInput(probeCtx, file.FilePath)
+		if resolveErr != nil {
+			return file, resolveErr
+		}
+		probePath = resolved
+		// Keep the marker. It is what exempts the row from the scan-side repair
+		// loop, and losing it here would re-arm that loop on the next scan.
+		probeSource = strm.ProbeSourcePlaceholder
+	}
+
+	probe, err := ProbeFile(probeCtx, e.ffprobePath, probePath)
 	if err != nil || probe == nil {
 		return file, err
 	}
 
 	updated := *file
-	applyProbeData(&updated, probe, "local")
+	applyProbeData(&updated, probe, probeSource)
 	return e.fileRepo.Upsert(ctx, updated)
 }
 
