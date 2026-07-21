@@ -1,7 +1,9 @@
 package playback
 
 import (
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/Silo-Server/silo-server/internal/models"
 )
@@ -39,5 +41,58 @@ func TestOrdinaryFilesAreNotTreatedAsPlaceholders(t *testing.T) {
 			}
 			t.Errorf("%s was treated as a placeholder; a missing probe would be hidden", path)
 		}
+	}
+}
+
+// A placeholder resolves to a fresh URL every time. Keying the anchor on what
+// it resolves to would make every key unique, defeating both the cache and the
+// singleflight dedup that stops concurrent seeks probing the same thing twice.
+func TestAnchorCacheKeyIsStableAcrossResolves(t *testing.T) {
+	const path = "/library/movies/Title (2024) [tmdb-1]/Title (2024) [2160p].strm"
+	a := copySeekAnchor{seconds: 1198.5, segment: 599}
+
+	key := "ffprobe\x00" + path + "\x001200.000000\x002"
+	storeAnchor(key, a)
+
+	got, ok := lookupAnchor(key)
+	if !ok {
+		t.Fatal("anchor was not cached; every seek would re-probe the remote container")
+	}
+	if got.seconds != a.seconds || got.segment != a.segment {
+		t.Errorf("cached anchor = %+v, want %+v", got, a)
+	}
+}
+
+// An expired anchor must not be served: the placeholder may since have resolved
+// to a different release, where that keyframe means nothing.
+func TestAnchorCacheExpires(t *testing.T) {
+	key := "expiring"
+	anchorCacheMu.Lock()
+	anchorCache[key] = cachedAnchor{
+		anchor:  copySeekAnchor{seconds: 10},
+		expires: time.Now().Add(-time.Second),
+	}
+	anchorCacheMu.Unlock()
+
+	if _, ok := lookupAnchor(key); ok {
+		t.Error("an expired anchor was served")
+	}
+}
+
+// The key space is every position anyone has scrubbed to, which is unbounded.
+func TestAnchorCacheIsBounded(t *testing.T) {
+	anchorCacheMu.Lock()
+	clear(anchorCache)
+	anchorCacheMu.Unlock()
+
+	for i := 0; i < anchorCacheMax*2; i++ {
+		storeAnchor("k"+strconv.Itoa(i), copySeekAnchor{seconds: float64(i)})
+	}
+
+	anchorCacheMu.Lock()
+	size := len(anchorCache)
+	anchorCacheMu.Unlock()
+	if size > anchorCacheMax {
+		t.Errorf("cache holds %d entries, want at most %d", size, anchorCacheMax)
 	}
 }
