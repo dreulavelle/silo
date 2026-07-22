@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -1105,6 +1106,123 @@ func main() {
 		}
 		deps.PluginService = pluginService
 		deps.PluginHTTPProxy = pluginHTTPProxy
+
+		// by-name placeholder routing (fork-owned seam).
+		//
+		// Resolver plugins can write placeholders that address a plugin by its
+		// stable manifest id (/api/v1/plugins/by-name/wisp/...) instead of its
+		// mutable numeric installation id. The numeric id is minted fresh on
+		// every plugin upgrade, so embedding it in a durable .strm strands the
+		// library on the first upgrade. The fork-owned strm follower translates
+		// by-name -> numeric at resolve time, but strm must never import
+		// internal/plugins; this closure is the ONLY place that touches the
+		// registry, injected exactly like SetHostPort. It supersedes wisp's old
+		// silent lowest-id guess with an explicit, logged single-enabled lookup.
+		if pluginInstallationStore != nil {
+			// Cache stable-id -> numeric-id for correctness, not TTL. The only
+			// event that changes the mapping is a lifecycle change (an upgrade
+			// rewrites the row with a new id but keeps plugin_id), and the hook
+			// below clears the cache the instant that happens — so there is no
+			// stale window and no expiry to guess.
+			var (
+				byNameMu    sync.RWMutex
+				byNameCache = map[string]int{}
+			)
+			resolvePluginNumericID := func(pluginID string) (int, bool) {
+				byNameMu.RLock()
+				cached, ok := byNameCache[pluginID]
+				byNameMu.RUnlock()
+				if ok {
+					return cached, true
+				}
+
+				// Mirror Service.ScanSourceClientByPluginID (service.go:596-641)
+				// but for the http_routes.v1 capability: resolve to the SINGLE
+				// enabled installation, and fail loudly with the specific cause
+				// on none / disabled / ambiguous rather than guessing.
+				resolveCtx, cancel := context.WithTimeout(appCtx, 5*time.Second)
+				defer cancel()
+				installations, err := pluginInstallationStore.ListByPluginID(resolveCtx, pluginID)
+				if err != nil {
+					slog.WarnContext(resolveCtx, "by-name route: listing installations failed",
+						"component", "plugins", "plugin_id", pluginID, "error", err)
+					return 0, false
+				}
+				var withCapability, enabled []*plugins.Installation
+				for _, inst := range installations {
+					if inst == nil {
+						continue
+					}
+					capabilities, capErr := pluginInstallationStore.ListCapabilities(resolveCtx, inst.ID)
+					if capErr != nil {
+						slog.WarnContext(resolveCtx, "by-name route: listing capabilities failed",
+							"component", "plugins", "plugin_id", pluginID,
+							"installation_id", inst.ID, "error", capErr)
+						return 0, false
+					}
+					hasHTTPRoutes := false
+					for _, capability := range capabilities {
+						if capability != nil && capability.Type == "http_routes.v1" {
+							hasHTTPRoutes = true
+							break
+						}
+					}
+					if !hasHTTPRoutes {
+						continue
+					}
+					withCapability = append(withCapability, inst)
+					if inst.Enabled {
+						enabled = append(enabled, inst)
+					}
+				}
+				switch {
+				case len(installations) == 0:
+					slog.WarnContext(resolveCtx, "by-name route: plugin is not installed",
+						"component", "plugins", "plugin_id", pluginID)
+					return 0, false
+				case len(withCapability) == 0:
+					slog.WarnContext(resolveCtx, "by-name route: plugin has no http_routes.v1 capability",
+						"component", "plugins", "plugin_id", pluginID,
+						"installations", len(installations))
+					return 0, false
+				case len(enabled) == 0:
+					slog.WarnContext(resolveCtx, "by-name route: plugin is disabled",
+						"component", "plugins", "plugin_id", pluginID,
+						"installations", len(withCapability))
+					return 0, false
+				case len(enabled) > 1:
+					ids := make([]int, 0, len(enabled))
+					for _, inst := range enabled {
+						ids = append(ids, inst.ID)
+					}
+					slog.WarnContext(resolveCtx, "by-name route: ambiguous, multiple enabled installations",
+						"component", "plugins", "plugin_id", pluginID, "installation_ids", ids)
+					return 0, false
+				default:
+					id := enabled[0].ID
+					byNameMu.Lock()
+					byNameCache[pluginID] = id
+					byNameMu.Unlock()
+					return id, true
+				}
+			}
+			strm.SetPluginIDResolver(resolvePluginNumericID)
+
+			// An upgrade rewrites the installation row with a new numeric id but
+			// keeps the stable plugin_id, so any cached by-name -> id mapping
+			// goes stale exactly then. Clear the whole cache on every lifecycle
+			// change (install / enable / disable / uninstall / auto-update) so
+			// the next resolve re-reads the fresh row. Correctness by
+			// invalidation, not by expiry.
+			if pluginService != nil {
+				pluginService.AddLifecycleHook(func(context.Context) {
+					byNameMu.Lock()
+					byNameCache = map[string]int{}
+					byNameMu.Unlock()
+				})
+			}
+		}
+
 		defer func() {
 			if pluginHost == nil {
 				return
