@@ -134,6 +134,34 @@ func portIsAllowed(port string) bool {
 func ResolveTarget(ctx context.Context, target string) (string, error) {
 	current := target
 
+	// A by-name placeholder (/api/v1/plugins/by-name/{pid}/...) addresses a
+	// plugin by its STABLE manifest id instead of its MUTABLE numeric
+	// installation id, so a durable .strm survives the id churn of a plugin
+	// upgrade. Translate it to the current numeric route ONCE, up front, before
+	// any hop; numeric placeholders skip this entirely and behave exactly as
+	// before.
+	//
+	// Order matters for safety. isHostLocalPluginRoute is checked FIRST so we
+	// only trust — and only rewrite — a by-name URL we would already have
+	// followed: rewriting a non-loopback by-name URL and then hopping to it
+	// would be an SSRF primitive. The rewrite preserves the trailing path and
+	// the HMAC token verbatim, then the SAME gate is re-run on the rewritten
+	// numeric URL (path.Clean / %2e / %2f / loopback / port) before the hop
+	// loop, so the substituted route is held to the identical standard.
+	if isHostLocalPluginRoute(current) && isByNameTarget(current) {
+		rewritten, err := rewriteByNameTarget(current)
+		if err != nil {
+			// A nil resolver or an unresolved id is a misconfiguration, not a
+			// transient fault: surface it as-is (ByNameUnresolvedError) so it
+			// never enters the retry path and masks the real cause.
+			return "", err
+		}
+		if !isHostLocalPluginRoute(rewritten) {
+			return "", &ByNameUnresolvedError{Reason: "rewritten numeric route failed the host-local security gate"}
+		}
+		current = rewritten
+	}
+
 	for hop := 0; hop < maxInternalHops; hop++ {
 		if !isHostLocalPluginRoute(current) {
 			// Already client-reachable.
